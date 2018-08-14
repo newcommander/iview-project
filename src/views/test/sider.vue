@@ -1,11 +1,10 @@
-<style scoped lang="less">
-</style>
 <template>
     <div>
-        this is from Sider.
+        this is from Sider, data is {{ data }}
     </div>
 </template>
 <script>
     export default {
+        props: ['data']
     }
 </script>

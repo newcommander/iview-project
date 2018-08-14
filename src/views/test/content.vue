@@ -1,11 +1,10 @@
-<style scoped>
-</style>
 <template>
-    <div class="contentview">
-        this is from Content
+    <div class="content-view">
+        this is from Content, data is {{ data }}
     </div>
 </template>
 <script>
     export default {
+        props: ['data']
     }
 </script>

@@ -1,4 +1,23 @@
-.contentview {
+.layout{
+    color: #fff;
+    position: relative;
+    overflow: auto;
+}
+.header-right {
+    margin: 0 auto;
+    text-align: right;
+}
+.content-view {
     min-height: 500px;
     background: #F0F0F0;
+}
+.logo {
+    width: 64px;
+    height: 64px;
+    background: #495090;
+    position: relative;
+    float: left;
+}
+.footer-view {
+    text-align: center;
 }

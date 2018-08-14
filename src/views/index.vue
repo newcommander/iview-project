@@ -3,6 +3,7 @@
         <Layout>
             <Header :style="{position: 'fixed', width: '100%', padding: '0px 50px 0px 0px'}">
                 <div class='logo'></div>
+                header text
             </Header>
             <Layout>
                 <Sider width=64 :style="{position: 'fixed', height: '100%', top: '64px'}">

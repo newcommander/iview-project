@@ -1,8 +1,6 @@
-<style scoped lang="less">
-</style>
 <template>
-    <div>
-        this is from Footer
+    <div class="footer-view">
+        2018-2018 &copy; Shuobu
     </div>
 </template>
 <script>
