@@ -7,11 +7,11 @@ const routers = [
         component: (resolve) => require(['./views/index.vue'], resolve)
     },
     {
-        path: '/test',
+        path: '/console',
         meta: {
-            title: 'test title'
+            title: 'Console'
         },
-        component: (resolve) => require(['./views/test/main.vue'], resolve)
+        component: (resolve) => require(['./views/console/main.vue'], resolve)
     }
 ];
 export default routers;

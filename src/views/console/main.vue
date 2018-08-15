@@ -5,14 +5,14 @@
                 <header_view :data=header_data @set_sider_data="onSetSiderData" @set_content_data="onSetContentData"></header_view>
             </Header>
             <Layout>
-                <Sider width=64 :style="{position: 'fixed', height: '100%', top: '64px'}">
-                    <sider_view :data=sider_data></sider_view>
+                <Sider width=180 :style="{position: 'fixed', height: '100%', top: '64px'}">
+                    <sider_view :data=sider_data @set_content_data="onSetContentData"></sider_view>
                 </Sider>
                 <Layout>
-                    <Content :style="{margin: '88px 24px 0 88px', background: '#fff', minHeight: '500px'}">
+                    <Content :style="{margin: '88px 24px 0 204px', background: '#fff', minHeight: '500px'}">
                         <content_view :data=content_data></content_view>
                     </Content>
-                    <Footer :style="{margin: '0 24px 0 88px', background: '#fff'}">
+                    <Footer :style="{margin: '0 24px 0 204px', background: '#fff'}">
                         <footer_view></footer_view>
                     </Footer>
                 </Layout>

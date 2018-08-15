@@ -3,20 +3,23 @@
     position: relative;
     overflow: auto;
 }
-.header-right {
-    margin: 0 auto;
-    text-align: right;
-}
-.content-view {
-    min-height: 500px;
-    background: #F0F0F0;
-}
 .logo {
-    width: 64px;
+    width: 180px;
     height: 64px;
     background: #495090;
     position: relative;
     float: left;
+}
+.header-right {
+    margin: 0 auto;
+    text-align: right;
+}
+.sider-view {
+}
+.content-view {
+    min-height: 500px;
+    background: #F0F0F0;
+    color: #515a6e;
 }
 .footer-view {
     text-align: center;
