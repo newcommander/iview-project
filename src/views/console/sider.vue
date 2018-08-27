@@ -1,19 +1,19 @@
 <template>
     <div class="sider-view">
-        <Menu theme="dark" active-name="status" width="auto" @on-select="MenuSelected">
-            <MenuItem name="status">
+        <Menu theme="dark" active-name="content-status" width="auto" @on-select="MenuSelected">
+            <MenuItem name="content-status">
                 <Icon size="24" type="md-speedometer" />
                 Status
             </MenuItem>
-            <MenuItem name="config">
+            <MenuItem name="content-configuration">
                 <Icon size="24" type="md-settings" />
                 Configuration
             </MenuItem>
-            <MenuItem name="accounts">
+            <MenuItem name="content-accounts">
                 <Icon size="24" type="md-contacts" />
                 Accounts
             </MenuItem>
-            <MenuItem name="router">
+            <MenuItem name="content-router">
                 <Icon size="24" type="md-list" />
                 Router
             </MenuItem>

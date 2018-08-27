@@ -10,7 +10,7 @@
                 </Sider>
                 <Layout>
                     <Content :style="{margin: '88px 24px 0 204px', background: '#fff', minHeight: '500px'}">
-                        <content_view :data=content_data></content_view>
+                        <content_view :content_view=content_data></content_view>
                     </Content>
                     <Footer :style="{margin: '0 24px 0 204px', background: '#fff'}">
                         <footer_view></footer_view>
