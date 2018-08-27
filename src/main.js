@@ -3,11 +3,13 @@ import iView from 'iview';
 import VueRouter from 'vue-router';
 import Routers from './router';
 import Util from './libs/util';
+import VueResource from 'vue-resource';
 import App from './app.vue';
 import 'iview/dist/styles/iview.css';
 import './views/console/console.css';
 
 Vue.use(VueRouter);
+Vue.use(VueResource);
 Vue.use(iView);
 
 // 路由配置

@@ -1,6 +1,6 @@
 <template>
     <div class="sider-view">
-        <Menu theme="dark" active-name="1" width="auto" @on-select="MenuSelected">
+        <Menu theme="dark" active-name="status" width="auto" @on-select="MenuSelected">
             <MenuItem name="status">
                 <Icon size="24" type="md-speedometer" />
                 Status
