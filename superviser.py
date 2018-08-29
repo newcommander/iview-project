@@ -1,8 +1,9 @@
 #!/usr/local/bin/python3
 
+import threading, time, io, json
+
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from http import HTTPStatus
-import json
 
 ERROR_DATA = """\
 {
@@ -12,6 +13,35 @@ ERROR_DATA = """\
 }
 """
 ERROR_TYPE = "application/json"
+
+class Monitor():
+    def __init__(self):
+        self.should_stop = False
+        self.extractor = threading.Thread(target=self.extract, name="extractor")
+        self.net_file = open('/proc/net/dev', "r")
+        print('init()')
+
+    def __del__(self):
+        self.net_file.close()
+        print('del()')
+
+    def extract(self):
+        while not self.should_stop:
+            self.net_file.seek(0)
+            for line in self.net_file:
+                if (len(line.split(':')) != 2):
+                    continue
+                if ('eth0' in line):
+                    print('%s' % line)
+            time.sleep(1)
+
+    def dispatch(self):
+        self.extractor.start()
+
+    def stop(self):
+        self.should_stop = True
+        self.extractor.join()
+
 
 class Local_HTTP_Request_Handler(BaseHTTPRequestHandler):
     error_message_format = ERROR_DATA
@@ -45,13 +75,6 @@ class Local_HTTP_Request_Handler(BaseHTTPRequestHandler):
 
         try:
             request_obj = json.loads(request_data)
-        except json.JSONDecodeError as msg:
-            response_status = HTTPStatus.BAD_REQUEST
-            response_str = (self.error_message_format % {
-                'code': self.error_list[1]['code'],
-                'message': self.error_list[1]['msg']
-            })
-        else:
             if (request_obj.__contains__('type')):
                 if (request_obj['type'] == 'ping'):
                     response_str = json.dumps(self.handle_ping())
@@ -67,6 +90,12 @@ class Local_HTTP_Request_Handler(BaseHTTPRequestHandler):
                     'code': self.error_list[2]['code'],
                     'message': self.error_list[2]['msg']
                 })
+        except json.JSONDecodeError as msg:
+            response_status = HTTPStatus.BAD_REQUEST
+            response_str = (self.error_message_format % {
+                'code': self.error_list[1]['code'],
+                'message': self.error_list[1]['msg']
+            })
 
         self.close_connection = True
         self.protocol_version = 'HTTP/1.1'
@@ -84,10 +113,18 @@ class Local_HTTP_Request_Handler(BaseHTTPRequestHandler):
         #print('sys_version: %s' % self.sys_version)
         #print('protocol_version: %s' % self.protocol_version)
 
-def run(server_class=ThreadingHTTPServer, handler_class=Local_HTTP_Request_Handler):
+def main(server_class=ThreadingHTTPServer, handler_class=Local_HTTP_Request_Handler):
+    monitor = Monitor()
+    monitor.dispatch()
+
     server_address = ('', 8000)
-    httpd = server_class(server_address, handler_class)
-    httpd.serve_forever()
+    http_server = server_class(server_address, handler_class)
+    try:
+        http_server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+    monitor.stop()
 
 if __name__ == '__main__':
-    run()
+    main()
