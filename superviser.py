@@ -1,6 +1,6 @@
 #!/usr/local/bin/python3
 
-import threading, time, io, json
+import threading, time, io, json, sys, os
 
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from http import HTTPStatus
@@ -19,20 +19,24 @@ class Monitor():
         self.should_stop = False
         self.extractor = threading.Thread(target=self.extract, name="extractor")
         self.net_file = open('/proc/net/dev', "r")
-        print('init()')
 
     def __del__(self):
         self.net_file.close()
-        print('del()')
 
     def extract(self):
+        print('extracting started.')
         while not self.should_stop:
             self.net_file.seek(0)
             for line in self.net_file:
                 if (len(line.split(':')) != 2):
                     continue
-                if ('eth0' in line):
-                    print('%s' % line)
+                if ('wlp3s0' in line):
+                    l = line.replace(':', ' ').split()
+                    if len(l) < 17: continue
+                    if l[2] == '0' and l[10] == '0': continue
+                    name = l[0]
+                    print('%s' % l[0])
+                    print('%s' % line, end='')
             time.sleep(1)
 
     def dispatch(self):
@@ -41,6 +45,7 @@ class Monitor():
     def stop(self):
         self.should_stop = True
         self.extractor.join()
+        print('extracting stoped.')
 
 
 class Local_HTTP_Request_Handler(BaseHTTPRequestHandler):
@@ -113,7 +118,13 @@ class Local_HTTP_Request_Handler(BaseHTTPRequestHandler):
         #print('sys_version: %s' % self.sys_version)
         #print('protocol_version: %s' % self.protocol_version)
 
-def main(server_class=ThreadingHTTPServer, handler_class=Local_HTTP_Request_Handler):
+class MainHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        host, port = self.server_address[:2]
+        self.server_name = host if (host != '') else os.popen('hostname').read()
+        self.server_port = port
+
+def main(server_class=MainHTTPServer, handler_class=Local_HTTP_Request_Handler):
     monitor = Monitor()
     monitor.dispatch()
 
