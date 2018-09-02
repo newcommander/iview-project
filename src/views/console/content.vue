@@ -3,7 +3,7 @@
         <div v-if="content_view == 'content-status'">
             <content_status :data=status_data></content_status>
         </div>
-        <div v-else-if="content_view == 'content_configuration'">
+        <div v-else-if="content_view == 'content-configuration'">
             <content_configuration :data=configuration_data></content_configuration>
         </div>
         <div v-else>
@@ -19,8 +19,8 @@
         props: ['content_view'],
         data: function () {
             return {
-                status_data: "status-data",
-                configuration_data: "configuration-data"
+                status_data: "status data",
+                configuration_data: "configuration data"
             }
         },
         components: {

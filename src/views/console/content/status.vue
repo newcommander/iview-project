@@ -15,17 +15,35 @@
                 let ifbw = this.$echarts.init(document.getElementById('InterfaceBandwidth'));
 
                 ifbw.setOption({
-                    title: { text: 'Bandwidth' },
-                    tooltip: {},
                     xAxis: {
-                        data: ['text1', 'text2', 'text3', 'text4', 'text5', 'text6']
+                        show: false,
+                        type: 'category',
+                        data: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
                     },
-                    yAxis: {},
-                    series: [{
-                        name: 'bw',
-                        type: 'line',
-                        data: [5, 20, 36, 10, 10, 20]
-                    }]
+                    legend: {
+                        top: 20,
+                        right: 20,
+                        orient: 'vertical',
+                        data: ['in', 'out']
+                    },
+                    yAxis: {
+                        type: 'value',
+                        name: 'MB/s'
+                    },
+                    series: [
+                        {
+                            name: 'in',
+                            data: [82, 93, 91, 93, 129, 133, 132],
+                            type: 'line',
+                            smooth: true
+                        },
+                        {
+                            name: 'out',
+                            data: [12, 93, 20, 93, 120, 130, 120],
+                            type: 'line',
+                            smooth: true
+                        }
+                    ]
                 });
             }
         }

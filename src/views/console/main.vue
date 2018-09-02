@@ -37,7 +37,7 @@
             return {
                 header_data: "init head data",
                 sider_data: "init sider data",
-                content_data: "init content data"
+                content_data: "content-status"
             }
         },
         methods: {

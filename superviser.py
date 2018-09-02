@@ -25,7 +25,7 @@ class Monitor():
         self.net_recv_bw_data2 = 0
         self.net_send_bw_data1 = 0
         self.net_send_bw_data2 = 0
-        self.bw_buffer_len = 2 * 4
+        self.bw_buffer_len = 7 * 24 * 3600
         self.recv_bw_buffer = [0] * self.bw_buffer_len
         self.send_bw_buffer = [0] * self.bw_buffer_len
         self.bw_buffer_p = 0
@@ -44,7 +44,7 @@ class Monitor():
                 for line in self.net_file:
                     if (len(line.split(':')) != 2):
                         continue
-                    if ('eth0' in line):
+                    if ('wlp3s0' in line):
                         l = line.replace(':', ' ').split()
                         if (len(l) < 17):
                             continue
