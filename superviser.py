@@ -1,7 +1,7 @@
 #!/usr/local/bin/python3
 
 import threading, time, io, json, sys, os
-import socketserver
+import socketserver, datetime
 
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from http import HTTPStatus
@@ -65,7 +65,6 @@ class Monitor():
                         self.send_bw_buffer[self.bw_buffer_p] = send_bw
                         self.bw_buffer_p = (self.bw_buffer_p + 1) % self.bw_buffer_len
 
-                        print('recv: %d, send: %d' % (recv_bw, send_bw))
                 time.sleep(1)
         except KeyboardInterrupt:
             pass
@@ -96,7 +95,8 @@ class Monitor():
                 recv_bw.extend(self.recv_bw_buffer[:(position + 1)])
                 send_bw.extend(self.send_bw_buffer[(self.bw_buffer_len - (length - position) + 1):])
                 send_bw.extend(self.send_bw_buffer[:(position + 1)])
-            net_bw = { 'recv': recv_bw, 'send': send_bw }
+            start_time = (datetime.datetime.now() + datetime.timedelta(seconds=-length)).strftime('%Y/%m/%d %H:%M:%S')
+            net_bw = { 'start_time': start_time, 'recv': recv_bw, 'send': send_bw }
             return net_bw
         else:
             return {}
