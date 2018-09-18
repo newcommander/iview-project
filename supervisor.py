@@ -1,10 +1,11 @@
 #!/usr/local/bin/python3
 
 import threading, time, io, json, sys, os
-import socketserver, datetime
+import socketserver, datetime, re
 
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from http import HTTPStatus
+from telnetlib import Telnet
 from functools import partial
 
 ERROR_DATA = """\
@@ -29,10 +30,99 @@ class Monitor():
         self.recv_bw_buffer = [0] * self.bw_buffer_len
         self.send_bw_buffer = [0] * self.bw_buffer_len
         self.bw_buffer_p = 0
-        self.tag = 'this is monitor tag'
+        self.tn = Telnet()
+        self.tn.open('localhost', 7505)
+        self.tn.read_until(b"\r\n", timeout=1)
+        self.openvpn_status_title = ['OpenVPN CLIENT LIST', 'ROUTING TABLE', 'GLOBAL STATS']
+        self.online_clients = {}
 
     def __del__(self):
         self.net_file.close()
+        self.tn.close()
+
+    def update_online_clients(self, line, line_type):
+        if (line_type == 1):
+            items = line.split(',')
+            if (len(items) != 5):
+                return
+            common_name = items[0]
+            real_addr = items[1]
+            byte_recv = int(items[2])
+            byte_send = int(items[3])
+            conn_since = items[4]
+            if real_addr not in self.online_clients:
+                obj = {
+                    'common_name': common_name,
+                    'byte_recv': byte_recv,
+                    'byte_send': byte_send,
+                    'conn_since': conn_since,
+                    'virt_addr': 'null',
+                    'last_ref': 'null'
+                }
+                self.online_clients[real_addr] = obj
+            else:
+                self.online_clients[real_addr]['common_name'] = common_name
+                self.online_clients[real_addr]['byte_recv'] = byte_recv
+                self.online_clients[real_addr]['byte_send'] = byte_send
+                self.online_clients[real_addr]['conn_since'] = conn_since
+        elif (line_type == 2):
+            items = line.split(',')
+            if (len(items) != 4):
+                return
+            virt_addr = items[0]
+            common_name = items[1]
+            real_addr = items[2]
+            last_ref = items[3]
+            if real_addr not in self.online_clients:
+                obj = {
+                    'virt_addr': virt_addr,
+                    'common_name': common_name,
+                    'last_ref': last_ref,
+                    'byte_recv': 0,
+                    'byte_send': 0,
+                    'conn_since': 'null',
+                }
+                self.online_clients[real_addr] = obj
+            else:
+                self.online_clients[real_addr]['virt_addr'] = virt_addr
+                self.online_clients[real_addr]['common_name'] = common_name
+                self.online_clients[real_addr]['last_ref'] = last_ref
+
+    def get_openvpn_status(self):
+        self.tn.write(b"status\n")
+        output = self.tn.read_until(b"END\r\n", timeout=1).decode()
+        output = output.replace('END\r\n', 'END')
+        output = output.replace('\r', '')
+        lines = output.split('\n')
+        current_title = 'NULL'
+        for line in lines:
+            if (line == 'END'):
+                break
+            if line in self.openvpn_status_title:
+                current_title = line
+                continue
+            if (current_title == self.openvpn_status_title[0]):
+                if (re.match('^Updated,', line)):
+                    continue
+                if (line == 'Common Name,Real Address,Bytes Received,Bytes Sent,Connected Since'):
+                    continue
+                self.update_online_clients(line, 1)
+            elif (current_title == self.openvpn_status_title[1]):
+                if (line == 'Virtual Address,Common Name,Real Address,Last Ref'):
+                    continue
+                self.update_online_clients(line, 2)
+            elif (current_title == self.openvpn_status_title[2]):
+                pass
+            else:
+                pass
+
+        self.tn.write(b"load-stats\n")
+        output = self.tn.read_until(b"END\r\n", timeout=1).decode()
+        output = output.replace('END\r\n', 'END')
+        output = output.replace('\r', '')
+        lines = output.split('\n')
+        #for line in lines:
+        #    print('*** %s' % line)
 
     def extract(self):
         print('extracting started.')
@@ -44,7 +134,7 @@ class Monitor():
                 for line in self.net_file:
                     if (len(line.split(':')) != 2):
                         continue
-                    if ('wlp3s0' in line):
+                    if ('eth0' in line):
                         l = line.replace(':', ' ').split()
                         if (len(l) < 17):
                             continue
@@ -64,6 +154,7 @@ class Monitor():
                         self.recv_bw_buffer[self.bw_buffer_p] = recv_bw
                         self.send_bw_buffer[self.bw_buffer_p] = send_bw
                         self.bw_buffer_p = (self.bw_buffer_p + 1) % self.bw_buffer_len
+                self.get_openvpn_status()
 
                 time.sleep(1)
         except KeyboardInterrupt:
@@ -133,14 +224,6 @@ class Local_HTTP_Request_Handler(BaseHTTPRequestHandler):
         return self.monitor.pull_data(req)
 
     def do_POST(self):
-        obj1 = {}
-        obj2 = {}
-        obj1['name'] = "binbin"
-        obj2['name'] = "jiajia"
-        objs = [obj1, obj2]
-        print('test: %s' % obj1.__contains__('name'))
-        print('objs: %s' % json.dumps(objs))
-
         response_status = HTTPStatus.OK
         response_str = ''
 
