@@ -35,6 +35,11 @@ class Monitor():
         self.tn.read_until(b"\r\n", timeout=1)
         self.openvpn_status_title = ['OpenVPN CLIENT LIST', 'ROUTING TABLE', 'GLOBAL STATS']
         self.online_clients = {}
+        self.load_state = {
+            'nclients': 0,
+            'bytesin': 0,
+            'bytesout': 0
+        }
 
     def __del__(self):
         self.net_file.close()
@@ -122,8 +127,15 @@ class Monitor():
         output = output.replace('END\r\n', 'END')
         output = output.replace('\r', '')
         lines = output.split('\n')
-        #for line in lines:
-        #    print('*** %s' % line)
+        for line in lines:
+            if (line == 'END'):
+                break
+            items = line.split(',')
+            if (len(items) != 3):
+                continue
+            self.load_state['nclients']= int(items[0].split('=')[1])
+            self.load_state['bytesin'] = int(items[1].split('=')[1])
+            self.load_state['bytesout'] = int(items[2].split('=')[1])
 
     def extract(self):
         print('extracting started.')
