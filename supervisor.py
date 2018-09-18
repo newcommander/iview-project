@@ -50,7 +50,12 @@ class Monitor():
             byte_recv = int(items[2])
             byte_send = int(items[3])
             conn_since = items[4]
-            if real_addr not in self.online_clients:
+            if real_addr in self.online_clients:
+                self.online_clients[real_addr]['common_name'] = common_name
+                self.online_clients[real_addr]['byte_recv'] = byte_recv
+                self.online_clients[real_addr]['byte_send'] = byte_send
+                self.online_clients[real_addr]['conn_since'] = conn_since
+            else:
                 obj = {
                     'common_name': common_name,
                     'byte_recv': byte_recv,
@@ -60,11 +65,6 @@ class Monitor():
                     'last_ref': 'null'
                 }
                 self.online_clients[real_addr] = obj
-            else:
-                self.online_clients[real_addr]['common_name'] = common_name
-                self.online_clients[real_addr]['byte_recv'] = byte_recv
-                self.online_clients[real_addr]['byte_send'] = byte_send
-                self.online_clients[real_addr]['conn_since'] = conn_since
         elif (line_type == 2):
             items = line.split(',')
             if (len(items) != 4):
@@ -73,7 +73,11 @@ class Monitor():
             common_name = items[1]
             real_addr = items[2]
             last_ref = items[3]
-            if real_addr not in self.online_clients:
+            if real_addr in self.online_clients:
+                self.online_clients[real_addr]['virt_addr'] = virt_addr
+                self.online_clients[real_addr]['common_name'] = common_name
+                self.online_clients[real_addr]['last_ref'] = last_ref
+            else:
                 obj = {
                     'virt_addr': virt_addr,
                     'common_name': common_name,
@@ -83,10 +87,6 @@ class Monitor():
                     'conn_since': 'null',
                 }
                 self.online_clients[real_addr] = obj
-            else:
-                self.online_clients[real_addr]['virt_addr'] = virt_addr
-                self.online_clients[real_addr]['common_name'] = common_name
-                self.online_clients[real_addr]['last_ref'] = last_ref
 
     def get_openvpn_status(self):
         self.tn.write(b"status\n")
@@ -112,6 +112,7 @@ class Monitor():
                     continue
                 self.update_online_clients(line, 2)
             elif (current_title == self.openvpn_status_title[2]):
+                #TODO
                 pass
             else:
                 pass
