@@ -33,8 +33,11 @@ class Monitor():
         self.tn = Telnet()
         self.tn.open('localhost', 7505)
         self.tn.read_until(b"\r\n", timeout=1)
+        self.tn.write(b"log off\n")
+        self.tn.read_until(b"END\r\n", timeout=1).decode()
         self.openvpn_status_title = ['OpenVPN CLIENT LIST', 'ROUTING TABLE', 'GLOBAL STATS']
         self.online_clients = {}
+        self.new_online_list = []
         self.load_state = {
             'nclients': 0,
             'bytesin': 0,
@@ -93,6 +96,9 @@ class Monitor():
                 }
                 self.online_clients[real_addr] = obj
 
+        if (real_addr not in self.new_online_list):
+            self.new_online_list.append(real_addr)
+
     def get_openvpn_status(self):
         self.tn.write(b"status\n")
         output = self.tn.read_until(b"END\r\n", timeout=1).decode()
@@ -100,6 +106,7 @@ class Monitor():
         output = output.replace('\r', '')
         lines = output.split('\n')
         current_title = 'NULL'
+        self.new_online_list.clear()
         for line in lines:
             if (line == 'END'):
                 break
@@ -121,6 +128,9 @@ class Monitor():
                 pass
             else:
                 pass
+        for key in list(self.online_clients.keys()):
+            if (key not in self.new_online_list):
+                del self.online_clients[key]
 
         self.tn.write(b"load-stats\n")
         output = self.tn.read_until(b"END\r\n", timeout=1).decode()
