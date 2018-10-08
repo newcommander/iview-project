@@ -42,6 +42,7 @@
                         type: 'value',
                         boundaryGap: [0, 0],
                         min: 0,
+                        minInterval: 0.05,
                         splitLine: {
                             show: false
                         }
@@ -82,12 +83,12 @@
                 this.$http.post('/supervisor', '{"type":"net_bw","length":300}').then(function (response) {
                     let t = new Date(response.data.start_time)
                     for (let i = 0; i < 300; i++) {
-                        bw_in.push([t.toISOString(), response.data.recv[i]/1024/1024])
+                        bw_in.push([t.toISOString(), (response.data.recv[i]/1024/1024).toFixed(2)])
                         t.setSeconds(t.getSeconds() + 1)
                     }
                     t.setSeconds(t.getSeconds() - 300)
                     for (let i = 0; i < 300; i++) {
-                        bw_out.push([t.toISOString(), response.data.send[i]/1024/1024])
+                        bw_out.push([t.toISOString(), (response.data.send[i]/1024/1024).toFixed(2)])
                         t.setSeconds(t.getSeconds() + 1)
                     }
                     this.if_bw.setOption({
