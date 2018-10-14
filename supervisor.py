@@ -192,7 +192,6 @@ class Monitor():
         print('extracting stoped.')
 
     def pull_data(self, request):
-        print('type: %s, length: %d' % (request['type'], request['length']))
         req_type = request['type']
         if (req_type == 'net_bw'):
             length = request['length']
@@ -212,6 +211,9 @@ class Monitor():
             start_time = (datetime.datetime.now() + datetime.timedelta(seconds=-length)).strftime('%Y/%m/%d %H:%M:%S')
             net_bw = { 'start_time': start_time, 'recv': recv_bw, 'send': send_bw }
             return net_bw
+        elif (req_type == 'clients_status'):
+            status = { 'statistics': self.load_state, 'clients_list': self.online_clients }
+            return status
         else:
             return {}
 
@@ -263,6 +265,8 @@ class Local_HTTP_Request_Handler(BaseHTTPRequestHandler):
                     else:
                         response_status = HTTPStatus.BAD_REQUEST
                         response_str = self.make_error_response(4)
+                elif (req_type == 'clients_status'):
+                    response_str = json.dumps(self.handle_monitor_req( { 'type':'clients_status' } ))
                 else:
                     response_status = HTTPStatus.BAD_REQUEST
                     response_str = self.make_error_response(3)
