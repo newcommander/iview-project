@@ -42,12 +42,17 @@
                 setTimeout(() => { this.refresh_supervisor_status() }, 5000);
             },
             handler () {
-                this.$emit('set_sider_data', 'sider data from header');
-                this.$emit('set_content_data', 'content data from header');
-                this.$Modal.info({
-                    title: 'nihao title',
-                    content: 'nihao content'
-                });
+                this.$http.post('/supervisor', '{"type":"clients_status"}').then(function (response) {
+                    console.log(response.data)
+                }, function (response) {
+                    // something error.
+                })
+                //this.$emit('set_sider_data', 'sider data from header');
+                //this.$emit('set_content_data', 'content data from header');
+                //this.$Modal.info({
+                //    title: 'nihao title',
+                //    content: 'nihao content'
+                //});
             }
         }
     }
