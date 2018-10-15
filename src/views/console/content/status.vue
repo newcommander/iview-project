@@ -2,6 +2,7 @@
     <div class="content-status-view">
         this is from Content Status, data is {{ data }}
         <div id="InterfaceBandwidth" style="width: 600px;height:250px;"></div>
+        <Table stripe no-data-text="none" no-filtered-data-text="none" :columns="clients_list_header" :data="clients_list"></Table>
     </div>
 </template>
 <script>
@@ -9,15 +10,49 @@
         props: ['data'],
         data: function () {
             return {
-                if_bw: null
+                if_bw: null,
+                clients_list_header: [
+                    { title: 'Common name', key: 'cn' },
+                    { title: 'Real address', key: 'real_addr' },
+                    { title: 'Virtual address', key: 'virt_addr' },
+                    { title: 'Throughput in', key: 'byte_recv' },
+                    { title: 'Throughput out', key: 'byte_send' },
+                    { title: 'Connected since', key: 'conn_since' },
+                    { title: 'Last reference', key: 'last_ref' }
+                ],
+                clients_list: []
             }
         },
         mounted: function () {
             let if_bw = this.$echarts.init(document.getElementById('InterfaceBandwidth'));
             this.if_bw = if_bw
             this.init_if_bw_chart()
+            this.update_clients_list()
         },
         methods: {
+            update_clients_list() {
+                this.$http.post('/supervisor', '{"type":"clients_status"}').then(function (response) {
+                    // response.data.statistics
+                    this.clients_list.length = 0
+                    for (var key in response.data.clients_list) {
+                        console.log(key)
+                        this.clients_list.push(
+                            {
+                                cn: response.data.clients_list[key]['common_name'],
+                                real_addr: key,
+                                virt_addr: response.data.clients_list[key]['virt_addr'],
+                                byte_recv: response.data.clients_list[key]['byte_recv'],
+                                byte_send: response.data.clients_list[key]['byte_send'],
+                                conn_since: response.data.clients_list[key]['conn_since'],
+                                last_ref: response.data.clients_list[key]['last_ref']
+                            }
+                        )
+                    }
+                }, function (response) {
+                    // something error.
+                })
+                setTimeout(() => { this.update_clients_list() }, 1000)
+            },
             init_if_bw_chart () {
                 let option = {
                     animation: false,
