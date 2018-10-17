@@ -2,6 +2,7 @@
 
 import threading, time, io, json, sys, os
 import socketserver, datetime, re
+import ipaddress
 
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from http import HTTPStatus
@@ -21,6 +22,14 @@ class Monitor():
     def __init__(self):
         self.should_stop = False
         self.extractor = threading.Thread(target=self.extract, name="extractor")
+        self.vpn_network_network = "0.0.0.0"
+        self.vpn_network_netmask = "0.0.0.0"
+        self.vpn_network_gateway = "0.0.0.0"
+        self.vpn_network_local_address = "0.0.0.0"
+        self.vpn_network_remote_netmask = "0.0.0.0"
+        self.vpn_network_broadcast = "0.0.0.0"
+        self.vpn_network = {}
+        self.vpn_network_routes = []
         self.net_file = open('/proc/net/dev', "r")
         self.net_recv_bw_data1 = 0
         self.net_recv_bw_data2 = 0
@@ -34,7 +43,8 @@ class Monitor():
         self.tn.open('localhost', 7505)
         self.tn.read_until(b"\r\n", timeout=1)
         self.tn.write(b"log off\n")
-        self.tn.read_until(b"END\r\n", timeout=1).decode()
+        self.tn.read_until(b"END\r\n", timeout=1)
+        self.check_context_info()
         self.openvpn_status_title = ['OpenVPN CLIENT LIST', 'ROUTING TABLE', 'GLOBAL STATS']
         self.online_clients = {}
         self.new_online_list = []
@@ -47,6 +57,38 @@ class Monitor():
     def __del__(self):
         self.net_file.close()
         self.tn.close()
+
+    def add_route(self, line):
+        route = {
+            'network': line.split(',')[0].split(':')[1],
+            'netmask': line.split(',')[1].split(':')[1],
+            'gateway': line.split(',')[2].split(':')[1]
+        }
+        if (self.vpn_network_local_address != "0.0.0.0"):
+            self.vpn_network = ipaddress.ip_network(route['network'] + "/" + route['netmask'])
+            if (ipaddress.ip_address(self.vpn_network_local_address) in self.vpn_network):
+                self.vpn_network_network = route['network']
+                self.vpn_network_netmask = route['netmask']
+                self.vpn_network_gateway = route['gateway']
+        self.vpn_network_routes.append(route)
+
+    def check_context_info(self):
+        self.tn.write(b"context-info\n")
+        output = self.tn.read_until(b"END\r\n", timeout=1).decode()
+        output = output.replace('END\r\n', 'END')
+        output = output.replace('\r', '')
+        lines = output.split('\n')
+        for line in lines:
+            if (line == 'END'):
+                break
+            if (re.match('^ifconfig-local:', line)):
+                self.vpn_network_local_address = line.split(':')[1]
+            elif (re.match('^ifconfig-remote-netmask:', line)):
+                self.vpn_network_remote_netmask = line.split(':')[1]
+            elif (re.match('^ifconfig-broadcast:', line)):
+                self.vpn_network_broadcast = line.split(':')[1]
+            elif (re.match('^route:', line)):
+                self.add_route(line.replace('route:', ''))
 
     def update_online_clients(self, line, line_type):
         if (line_type == 1):
@@ -78,6 +120,8 @@ class Monitor():
             if (len(items) != 4):
                 return
             virt_addr = items[0]
+            if (not ipaddress.ip_network(virt_addr).subnet_of(self.vpn_network)):
+                return
             common_name = items[1]
             real_addr = items[2]
             last_ref = items[3]
