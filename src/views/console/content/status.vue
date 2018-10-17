@@ -15,8 +15,8 @@
                     { title: 'Common name', key: 'cn' },
                     { title: 'Real address', key: 'real_addr' },
                     { title: 'Virtual address', key: 'virt_addr' },
-                    { title: 'Throughput in', key: 'byte_recv' },
-                    { title: 'Throughput out', key: 'byte_send' },
+                    { title: 'Bytes in', key: 'byte_recv' },
+                    { title: 'Bytes out', key: 'byte_send' },
                     { title: 'Connected since', key: 'conn_since' },
                     { title: 'Last reference', key: 'last_ref' }
                 ],
@@ -30,26 +30,37 @@
             this.update_clients_list()
         },
         methods: {
+            is_object_empty(obj) {
+                for (let key in obj) {
+                    return false
+                }
+                return true
+            },
             update_clients_list() {
                 this.$http.post('/supervisor', '{"type":"clients_status"}').then(function (response) {
                     // response.data.statistics
-                    this.clients_list.length = 0
-                    for (var key in response.data.clients_list) {
-                        console.log(key)
-                        this.clients_list.push(
-                            {
-                                cn: response.data.clients_list[key]['common_name'],
-                                real_addr: key,
-                                virt_addr: response.data.clients_list[key]['virt_addr'],
-                                byte_recv: response.data.clients_list[key]['byte_recv'],
-                                byte_send: response.data.clients_list[key]['byte_send'],
-                                conn_since: response.data.clients_list[key]['conn_since'],
-                                last_ref: response.data.clients_list[key]['last_ref']
-                            }
-                        )
+                    if (this.is_object_empty(response.data.clients_list)) {
+                        this.clients_list = []
+                    } else {
+                        let clients_list = []
+                        for (let key in response.data.clients_list) {
+                            clients_list.push(
+                                {
+                                    cn: response.data.clients_list[key]['common_name'],
+                                    real_addr: key,
+                                    virt_addr: response.data.clients_list[key]['virt_addr'],
+                                    byte_recv: response.data.clients_list[key]['byte_recv'],
+                                    byte_send: response.data.clients_list[key]['byte_send'],
+                                    conn_since: response.data.clients_list[key]['conn_since'],
+                                    last_ref: response.data.clients_list[key]['last_ref']
+                                }
+                            )
+                        }
+                        this.clients_list = clients_list
                     }
                 }, function (response) {
                     // something error.
+                    this.clients_list.length = 0
                 })
                 setTimeout(() => { this.update_clients_list() }, 1000)
             },
