@@ -3,6 +3,7 @@
         this is from Content Status, data is {{ data }}
         <div id="InterfaceBandwidth" style="width: 600px;height:250px;"></div>
         <Table stripe no-data-text="none" no-filtered-data-text="none" :columns="clients_list_header" :data="clients_list"></Table>
+        <Table stripe no-data-text="none" no-filtered-data-text="none" :columns="if_list_header" :data="if_list"></Table>
     </div>
 </template>
 <script>
@@ -11,6 +12,11 @@
         data: function () {
             return {
                 if_bw: null,
+                if_list_header: [
+                    { title: 'Interface', key: 'name' },
+                    { title: 'Address', key: 'addr' }
+                ],
+                if_list: [],
                 clients_list_header: [
                     { title: 'Common name', key: 'cn' },
                     { title: 'Real address', key: 'real_addr' },
@@ -28,6 +34,7 @@
             this.if_bw = if_bw
             this.init_if_bw_chart()
             this.update_clients_list()
+            this.update_interface_list()
         },
         methods: {
             is_object_empty(obj) {
@@ -36,9 +43,29 @@
                 }
                 return true
             },
+            update_interface_list() {
+                this.$http.post('/supervisor', '{"type":"ifconfig"}').then(function (response) {
+                    if (response.data.length == 0) {
+                        this.if_list.length = 0
+                    } else {
+                        let if_list = []
+                        let len = response.data.length
+                        for (let i = 0; i < len; i++)
+                        {
+                            let nic = response.data[i]
+                            console.log(nic)
+                        }
+                        this.if_list = if_list
+                    }
+                }, function (response) {
+                    // something error.
+                    this.if_list.length = 0
+                })
+                setTimeout(() => { this.update_interface_list() }, 1000)
+            },
             update_clients_list() {
                 this.$http.post('/supervisor', '{"type":"clients_status"}').then(function (response) {
-                    // response.data.statistics
+                    // TODO: response.data.statistics
                     if (this.is_object_empty(response.data.clients_list)) {
                         this.clients_list = []
                     } else {
