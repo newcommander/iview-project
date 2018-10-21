@@ -3,6 +3,7 @@
 import threading, time, io, json, sys, os
 import socketserver, datetime, re
 import ipaddress
+import netifaces
 
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from http import HTTPStatus
@@ -53,6 +54,7 @@ class Monitor():
             'bytesin': 0,
             'bytesout': 0
         }
+        self.interface_list = []
 
     def __del__(self):
         self.net_file.close()
@@ -143,7 +145,16 @@ class Monitor():
         if (real_addr not in self.new_online_list):
             self.new_online_list.append(real_addr)
 
-    def get_openvpn_status(self):
+    def update_interface_info(self):
+        if_list = []
+        for name in netifaces.interfaces():
+            addrs = netifaces.ifaddresses(name)
+            if (netifaces.AF_INET in addrs):
+                addr = addrs[netifaces.AF_INET][0]
+                if_list.append({'name': name, 'info': addr})
+        self.interface_list = if_list
+
+    def update_openvpn_status(self):
         self.tn.write(b"status\n")
         output = self.tn.read_until(b"END\r\n", timeout=1).decode()
         output = output.replace('END\r\n', 'END')
@@ -221,7 +232,8 @@ class Monitor():
                         self.recv_bw_buffer[self.bw_buffer_p] = recv_bw
                         self.send_bw_buffer[self.bw_buffer_p] = send_bw
                         self.bw_buffer_p = (self.bw_buffer_p + 1) % self.bw_buffer_len
-                self.get_openvpn_status()
+                self.update_openvpn_status()
+                self.update_interface_info()
 
                 time.sleep(1)
         except KeyboardInterrupt:
@@ -258,6 +270,8 @@ class Monitor():
         elif (req_type == 'clients_status'):
             status = { 'statistics': self.load_state, 'clients_list': self.online_clients }
             return status
+        elif (req_type == 'ifconfig'):
+            return self.interface_list
         else:
             return {}
 
@@ -311,6 +325,8 @@ class Local_HTTP_Request_Handler(BaseHTTPRequestHandler):
                         response_str = self.make_error_response(4)
                 elif (req_type == 'clients_status'):
                     response_str = json.dumps(self.handle_monitor_req( { 'type':'clients_status' } ))
+                elif (req_type == 'ifconfig'):
+                    response_str = json.dumps(self.handle_monitor_req( { 'type':'ifconfig' } ))
                 else:
                     response_status = HTTPStatus.BAD_REQUEST
                     response_str = self.make_error_response(3)
