@@ -2,6 +2,7 @@
 
 import threading, time, io, json, sys, os
 import socketserver, datetime, re
+import subprocess
 import ipaddress
 import netifaces
 
@@ -55,6 +56,7 @@ class Monitor():
             'bytesout': 0
         }
         self.interface_list = []
+        self.route_table = []
 
     def __del__(self):
         self.net_file.close()
@@ -148,6 +150,21 @@ class Monitor():
 
         if (real_addr not in self.new_online_list):
             self.new_online_list.append(real_addr)
+
+    def update_route_table(self):
+        output = subprocess.run("route -n", shell=True, capture_output=True, text=True).stdout.strip()
+        route_list = output.split('\n')[2:]
+        route_table = []
+        for route in route_list:
+            route = ' '.join(route.split()).split(' ')
+            route = {
+                'dest': route[0],
+                'mask': route[2],
+                'gateway': route[1],
+                'interface': route[7]
+            }
+            route_table.append(route)
+        self.route_table = route_table
 
     def update_interface_info(self):
         if_list = []
@@ -243,6 +260,7 @@ class Monitor():
                         self.bw_buffer_p = (self.bw_buffer_p + 1) % self.bw_buffer_len
                 self.update_openvpn_status()
                 self.update_interface_info()
+                self.update_route_table()
 
                 time.sleep(1)
         except KeyboardInterrupt:
@@ -281,8 +299,10 @@ class Monitor():
             return status
         elif (req_type == 'ifconfig'):
             return self.interface_list
+        elif (req_type == 'route_table'):
+            return self.route_table
         elif (req_type == 'test'):
-            return self.interface_list
+            return self.route_table
         else:
             return {}
 
@@ -338,6 +358,8 @@ class Local_HTTP_Request_Handler(BaseHTTPRequestHandler):
                     response_str = json.dumps(self.handle_monitor_req( { 'type':'clients_status' } ))
                 elif (req_type == 'ifconfig'):
                     response_str = json.dumps(self.handle_monitor_req( { 'type':'ifconfig' } ))
+                elif (req_type == 'route_table'):
+                    response_str = json.dumps(self.handle_monitor_req( { 'type':'route_table' } ))
                 elif (req_type == 'test'):
                     response_str = json.dumps(self.handle_monitor_req( { 'type':'test' } ))
                 else:
