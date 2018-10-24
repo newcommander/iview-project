@@ -1,0 +1,15 @@
+python3 modules:
+    ipaddress
+    netifaces
+    telnetlib
+    functools
+
+RPM packages:
+    net-tools
+    pip3
+    node
+    npm
+
+software from source:
+    openssl-fips
+    Python3.7.0
