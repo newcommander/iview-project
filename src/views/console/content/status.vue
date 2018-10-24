@@ -4,6 +4,7 @@
         <div id="InterfaceBandwidth" style="width: 600px;height:250px;"></div>
         <Table stripe no-data-text="none" no-filtered-data-text="none" :columns="clients_list_header" :data="clients_list"></Table>
         <Table stripe no-data-text="none" no-filtered-data-text="none" :columns="if_list_header" :data="if_list"></Table>
+        <Table stripe no-data-text="none" no-filtered-data-text="none" :columns="route_table_header" :data="route_table"></Table>
     </div>
 </template>
 <script>
@@ -37,7 +38,14 @@
                     { title: 'Connected since', key: 'conn_since' },
                     { title: 'Last reference', key: 'last_ref' }
                 ],
-                clients_list: []
+                clients_list: [],
+                route_table_header: [
+                    { title: 'Destination', key: 'dest' },
+                    { title: 'Genmask', key: 'mask' },
+                    { title: 'Gateway', key: 'gateway' },
+                    { title: 'Interface', key: 'interface' }
+                ],
+                route_table: []
             }
         },
         mounted: function () {
@@ -46,6 +54,7 @@
             this.init_if_bw_chart()
             this.update_clients_list()
             this.update_interface_list()
+            this.update_route_table()
         },
         methods: {
             is_object_empty(obj) {
@@ -71,6 +80,15 @@
                     }
                 }
                 return true
+            },
+            update_route_table() {
+                this.$http.post('/supervisor', '{"type":"route_table"}').then(function (response) {
+                    this.route_table = response.data
+                }, function (response) {
+                    // something error.
+                    this.route_table = []
+                })
+                setTimeout(() => { this.update_interface_list() }, 10000)
             },
             update_interface_list() {
                 this.$http.post('/supervisor', '{"type":"ifconfig"}').then(function (response) {
