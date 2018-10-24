@@ -104,12 +104,14 @@ class Monitor():
             conn_since = items[4]
             if real_addr in self.online_clients:
                 self.online_clients[real_addr]['common_name'] = common_name
+                self.online_clients[real_addr]['real_addr'] = real_addr
                 self.online_clients[real_addr]['byte_recv'] = byte_recv
                 self.online_clients[real_addr]['byte_send'] = byte_send
                 self.online_clients[real_addr]['conn_since'] = conn_since
             else:
                 obj = {
                     'common_name': common_name,
+                    'real_addr': real_addr,
                     'byte_recv': byte_recv,
                     'byte_send': byte_send,
                     'conn_since': conn_since,
@@ -130,11 +132,13 @@ class Monitor():
             if real_addr in self.online_clients:
                 self.online_clients[real_addr]['virt_addr'] = virt_addr
                 self.online_clients[real_addr]['common_name'] = common_name
+                self.online_clients[real_addr]['real_addr'] = real_addr
                 self.online_clients[real_addr]['last_ref'] = last_ref
             else:
                 obj = {
                     'virt_addr': virt_addr,
                     'common_name': common_name,
+                    'real_addr': real_addr,
                     'last_ref': last_ref,
                     'byte_recv': 0,
                     'byte_send': 0,
@@ -151,7 +155,12 @@ class Monitor():
             addrs = netifaces.ifaddresses(name)
             if (netifaces.AF_INET in addrs):
                 addr = addrs[netifaces.AF_INET][0]
-                if_list.append({'name': name, 'info': addr})
+                addr['name'] = name
+                if (not addr.__contains__('broadcast')):
+                    addr['broadcast'] = '-'
+                if (not addr.__contains__('peer')):
+                    addr['peer'] = '-'
+                if_list.append(addr)
         self.interface_list = if_list
 
     def update_openvpn_status(self):
@@ -272,6 +281,8 @@ class Monitor():
             return status
         elif (req_type == 'ifconfig'):
             return self.interface_list
+        elif (req_type == 'test'):
+            return self.interface_list
         else:
             return {}
 
@@ -327,6 +338,8 @@ class Local_HTTP_Request_Handler(BaseHTTPRequestHandler):
                     response_str = json.dumps(self.handle_monitor_req( { 'type':'clients_status' } ))
                 elif (req_type == 'ifconfig'):
                     response_str = json.dumps(self.handle_monitor_req( { 'type':'ifconfig' } ))
+                elif (req_type == 'test'):
+                    response_str = json.dumps(self.handle_monitor_req( { 'type':'test' } ))
                 else:
                     response_status = HTTPStatus.BAD_REQUEST
                     response_str = self.make_error_response(3)
