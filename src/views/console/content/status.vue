@@ -7,12 +7,23 @@
     </div>
 </template>
 <script>
+    import expandRaw from './table_expand.vue';
     export default {
+        components: { expandRaw },
         props: ['data'],
         data: function () {
             return {
                 if_bw: null,
                 if_list_header: [
+                    {
+                        type: 'expand',
+                        width: 50,
+                        render: (h, params) => {
+                            return h(expandRaw, {
+                                props: { row: params.row }
+                            })
+                        }
+                    },
                     { title: 'Interface', key: 'name' },
                     { title: 'Address', key: 'addr' }
                 ],
@@ -43,23 +54,37 @@
                 }
                 return true
             },
+            is_object_equal(obj1, obj2) {
+                if (!this.is_object_empty(obj1)) {
+                    for (let key in obj1) {
+                        if (!(key in obj2))
+                            return false
+                        if (obj1[key] != obj2[key])
+                            return false
+                    }
+                } else if (!this.is_object_empty(obj2)) {
+                    for (let key in obj2) {
+                        if (!(key in obj1))
+                            return false
+                        if (obj1[key] != obj2[key])
+                            return false
+                    }
+                }
+                return true
+            },
             update_interface_list() {
                 this.$http.post('/supervisor', '{"type":"ifconfig"}').then(function (response) {
-                    if (response.data.length == 0) {
-                        this.if_list.length = 0
+                    if (this.if_list.length != response.data.length) {
+                        this.if_list = response.data
                     } else {
-                        let if_list = []
-                        let len = response.data.length
-                        for (let i = 0; i < len; i++)
-                        {
-                            let nic = response.data[i]
-                            console.log(nic)
+                        for (let i = 0; i < response.data.length; i++) {
+                            if (!(this.is_object_equal(this.if_list[i], response.data[i])))
+                                this.if_list[i] = response.data[i]
                         }
-                        this.if_list = if_list
                     }
                 }, function (response) {
                     // something error.
-                    this.if_list.length = 0
+                    this.if_list = []
                 })
                 setTimeout(() => { this.update_interface_list() }, 1000)
             },
@@ -74,7 +99,7 @@
                             clients_list.push(
                                 {
                                     cn: response.data.clients_list[key]['common_name'],
-                                    real_addr: key,
+                                    real_addr: response.data.clients_list[key]['real_addr'],
                                     virt_addr: response.data.clients_list[key]['virt_addr'],
                                     byte_recv: response.data.clients_list[key]['byte_recv'],
                                     byte_send: response.data.clients_list[key]['byte_send'],

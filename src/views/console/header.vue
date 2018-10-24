@@ -42,7 +42,7 @@
                 setTimeout(() => { this.refresh_supervisor_status() }, 5000);
             },
             handler () {
-                this.$http.post('/supervisor', '{"type":"ifconfig"}').then(function (response) {
+                this.$http.post('/supervisor', '{"type":"test"}').then(function (response) {
                     console.log(JSON.stringify(response.data))
                 }, function (response) {
                     // something error.
