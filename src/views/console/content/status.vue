@@ -88,7 +88,7 @@
                     // something error.
                     this.route_table = []
                 })
-                setTimeout(() => { this.update_interface_list() }, 10000)
+                setTimeout(() => { this.update_route_table() }, 10000)
             },
             update_interface_list() {
                 this.$http.post('/supervisor', '{"type":"ifconfig"}').then(function (response) {
