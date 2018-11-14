@@ -330,10 +330,9 @@ int main(int argc, char **argv)
 {
     struct thread_info *ti = NULL, *ti_tmp;
     struct sigaction sa;
-    //pthread_attr_t attr;
     pcap_if_t *if_list = NULL, *p;
-    int ret;
     char errbuf[PCAP_ERRBUF_SIZE];
+    int ret;
 
     sa.sa_flags = SA_SIGINFO;
     sigemptyset(&sa.sa_mask);
@@ -375,21 +374,6 @@ int main(int argc, char **argv)
     }
 #endif
 
-    /*
-    ret = pthread_attr_init(&attr);
-    if (ret != 0) {
-        printf("Init thread attr failed: %s.\n", strerror(ret));
-        ret = 1;
-        goto free_all_devs;
-    }
-    ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    if (ret != 0) {
-        printf("Set detach stat for attr failed: %s.\n", strerror(ret));
-        ret = 1;
-        goto destroy_attr;
-    }
-    */
-
     p = if_list;
     while (p) {
         if (((p->flags & PCAP_IF_CONNECTION_STATUS) != PCAP_IF_CONNECTION_STATUS_CONNECTED) ||
@@ -427,148 +411,7 @@ int main(int argc, char **argv)
         }
     }
 
-    ret = 0;
-#if 0
-    if (get_device_config(p->name) < 0) {
-        printf("Get device config failed: %s.\n", p->name);
-        pcap_freealldevs(if_list);
-        return 1;
-    }
-
-    printf("Capture on interface: %s ...\n", p->name);
-    //handle = pcap_create(p->name, errbuf);
-    handle = pcap_create("tun0", errbuf);
-    if (!handle) {
-        printf("%s\n", errbuf);
-        pcap_freealldevs(if_list);
-        return 1;
-    }
     pcap_freealldevs(if_list);
 
-    ret = pcap_activate(handle);
-    if (ret < 0) {
-        switch (ret) {
-        case PCAP_ERROR_ACTIVATED:
-            printf("The handle has already been activated.\n");
-            break;
-        case PCAP_ERROR_NO_SUCH_DEVICE:
-            printf("The capture source doesn't exist.\n");
-            break;
-        case PCAP_ERROR_PERM_DENIED:
-            printf("The process doesn't have permission to open the capture source.\n");
-            break;
-        case PCAP_ERROR_PROMISC_PERM_DENIED:
-            printf("The process doesn't have permission to put it into promiscuous mode.\n");
-            break;
-        case PCAP_ERROR_RFMON_NOTSUP:
-            printf("The capture source doesn't support monitor mode.\n");
-            break;
-        case PCAP_ERROR_IFACE_NOT_UP:
-            printf("The capture source device is not up.\n");
-            break;
-        case PCAP_ERROR:
-            pcap_perror(handle, "Active capture device failed");
-            break;
-        }
-        ret = 1;
-        goto close;
-    } else if (ret > 0) {
-        switch (ret) {
-        case PCAP_WARNING_PROMISC_NOTSUP:
-            printf("The capture source doesn't support promiscuous mode.\n");
-            break;
-        case PCAP_WARNING_TSTAMP_TYPE_NOTSUP:
-            printf("The time stamp type specified isn't supported by the capture source.\n");
-            break;
-        case PCAP_WARNING:
-            pcap_perror(handle, "Warning: Active capture device");
-            break;
-        }
-    }
-
-    ret = pcap_list_datalinks(handle, &dl_list);
-    if (ret < 0) {
-        switch (ret) {
-        case PCAP_ERROR_NOT_ACTIVATED:
-            printf("Cannot get datalink list, the capture source has not yet been activated.\n");
-            break;
-        case PCAP_ERROR:
-            pcap_perror(handle, "Get datalink list failed");
-            break;
-        }
-        ret = 1;
-        goto close;
-    }
-    for (i = 0; i < ret; i++) {
-        if (dl_list[i] == pcap_datalink_name_to_val("EN10MB"))
-            break;
-        if (dl_list[i] == pcap_datalink_name_to_val("RAW"))
-            break;
-    }
-    if (i == ret) {
-        printf("The capture source don't support datalink: Ethernet.\n");
-        pcap_free_datalinks(dl_list);
-        ret = 1;
-        goto close;
-    }
-    pcap_free_datalinks(dl_list);
-
-    //if (pcap_set_datalink(handle, pcap_datalink_name_to_val("EN10MB")) < 0) {
-    if (pcap_set_datalink(handle, pcap_datalink_name_to_val("RAW")) < 0) {
-        pcap_perror(handle, "Set datalink failed");
-        ret = 1;
-        goto close;
-    }
-
-    memset(filter_expression, 0, FILTER_EXP_LEN);
-    inet_ntop(AF_INET, &if_addr, ip_addr_buf, INET_ADDRSTRLEN);
-    //snprintf(filter_expression, FILTER_EXP_LEN, "ip host %s", ip_addr_buf);
-    snprintf(filter_expression, FILTER_EXP_LEN, "ip");
-
-    if (pcap_compile(handle, &filter, filter_expression, 1, if_netmask) < 0) {
-        pcap_perror(handle, "Compile filter failed");
-        ret = 1;
-        goto close;
-    }
-
-    if (pcap_setfilter(handle, &filter) < 0) {
-        pcap_perror(handle, "Set filter failed");
-        ret = 1;
-        goto free_code;
-    }
-
-    sa.sa_flags = SA_SIGINFO;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_sigaction = sigint_handler;
-
-    ret = sigaction(SIGINT, &sa, NULL);
-    if (ret < 0) {
-        switch (ret) {
-        case EFAULT:
-            printf("Invalid action parameter.\n");
-            break;
-        case EINVAL:
-            printf("An invalid signal was specified.\n");
-        }
-        ret = 1;
-        goto free_code;
-    }
-
-    ret = pcap_loop(handle, -1, packet_process, NULL);
-    if (ret == -2)
-        printf("\rCancled.\n");
-
-    ret = 0;
-
-free_code:
-    pcap_freecode(&filter);
-close:
-    pcap_close(handle);
-#endif
-//destroy_attr:
-//    pthread_attr_destroy(&attr);
-//free_all_devs:
-    pcap_freealldevs(if_list);
-
-    return ret;
+    return 0;
 }
