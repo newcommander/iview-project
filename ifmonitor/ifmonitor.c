@@ -5,6 +5,9 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +36,13 @@ struct ip_packet {
     __u8 data[];
 };
 
+#define STATE_BUFFER_LENGTH 10
+struct state_info {
+    int curr_index;
+    __u32 bandwidth_in[STATE_BUFFER_LENGTH];  // in byte
+    __u32 bandwidth_out[STATE_BUFFER_LENGTH];  // in byte
+};
+
 struct thread_info {
     struct list_head list;
     pthread_t th;
@@ -53,9 +63,14 @@ struct thread_info {
     char filter_expression[FILTER_EXP_LEN];
     char errbuf[PCAP_ERRBUF_SIZE];
     struct bpf_program filter;
+
+    __u32 bytes_in;
+    __u32 bytes_out;
+    struct state_info if_state;
 };
 
 static struct list_head thread_list;
+static pthread_t timing_th;
 
 static void packet_process(u_char *arg, const struct pcap_pkthdr *header, const u_char *packet)
 {
@@ -86,9 +101,14 @@ static void packet_process(u_char *arg, const struct pcap_pkthdr *header, const 
         return;
     }
 
+    if (info->if_addr == pkt->src_ip)
+        info->bytes_out += ntohs(pkt->length);
+    else
+        info->bytes_in += ntohs(pkt->length);
+
     inet_ntop(AF_INET, &pkt->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
     inet_ntop(AF_INET, &pkt->dst_ip, ip_addr_buf1, INET_ADDRSTRLEN);
-    printf("[%s]: %s > %s, length=%d\n", info->if_name, ip_addr_buf, ip_addr_buf1, ntohs(pkt->length));
+    //printf("[%s]: %s > %s, length=%d\n", info->if_name, ip_addr_buf, ip_addr_buf1, ntohs(pkt->length));
 
 #if 0
     int i;
@@ -318,9 +338,57 @@ close:
     return NULL;
 }
 
+void* timing_fn(void *arg)
+{
+    struct thread_info *ti = NULL;
+    struct timeval tv;
+    int ret;
+
+    while (1) {
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        ret = select(0, NULL, NULL, NULL, &tv);
+        if (ret < 0) {
+            printf("Timer select error: %s\n", strerror(errno));
+            return NULL;
+        }
+        int head = 1;
+        list_for_each_entry(ti, &thread_list, list) {
+            if (head)
+                printf("\r");
+            else
+                printf(" | ");
+            head = 0;
+            printf("[%s: IN=%u, OUT=%u]", ti->if_name, ti->bytes_in, ti->bytes_out);
+            ti->if_state.bandwidth_in[ti->if_state.curr_index] = ti->bytes_in;
+            ti->if_state.bandwidth_out[ti->if_state.curr_index] = ti->bytes_out;
+            ti->bytes_in = 0;
+            ti->bytes_out = 0;
+            ti->if_state.curr_index = (ti->if_state.curr_index + 1) % STATE_BUFFER_LENGTH;
+        }
+        fflush(stdout);
+    }
+    return NULL;
+}
+
 void sigint_handler(int signal, siginfo_t *sg_info, void *unused)
 {
     struct thread_info *ti = NULL;
+    int ret;
+
+    ret = pthread_cancel(timing_th);
+    if (ret != 0) {
+        printf("Cancel timing thread error: %s\n", strerror(ret));
+        // TODO: then what ?
+        return;
+    }
+
+    ret = pthread_join(timing_th, NULL);
+    if (ret != 0) {
+        printf("Join timing thread error: %s\n", strerror(ret));
+        // TODO: then what ?
+        return;
+    }
 
     list_for_each_entry(ti, &thread_list, list)
         pcap_breakloop(ti->handle);
@@ -386,6 +454,7 @@ int main(int argc, char **argv)
         if (!ti)
             printf("Allocate memory for capture [%s] failed.\n", p->name);
         strncpy(ti->if_name, p->name, (strlen(p->name) > 63) ? 63 : strlen(p->name));
+        ti->if_state.curr_index = 0;
         list_add_tail(&ti->list, &thread_list);
 
         ret = pthread_create(&ti->th, NULL, thread_fn, ti);
@@ -397,7 +466,14 @@ int main(int argc, char **argv)
         p = p->next;
     }
 
-    if (list_empty_careful(&thread_list))
+    if (!list_empty_careful(&thread_list)) {
+        ret = pthread_create(&timing_th, NULL, timing_fn, NULL);
+        if (ret != 0) {
+            printf("Create timing thread for failed: %s\n", strerror(ret));
+            list_for_each_entry(ti, &thread_list, list)
+                pcap_breakloop(ti->handle);
+        }
+    } else
         printf("No suitable device found.\n");
 
     list_for_each_entry_safe(ti, ti_tmp, &thread_list, list) {
@@ -406,7 +482,7 @@ int main(int argc, char **argv)
             list_del(&ti->list);
             free(ti);
         } else {
-            printf("Join failed: [%s] %s\n", ti->if_name, strerror(ret));
+            printf("Join error: [%s] %s\n", ti->if_name, strerror(ret));
             // TODO: then what ?
         }
     }
