@@ -88,8 +88,7 @@ static void packet_process(u_char *arg, const struct pcap_pkthdr *header, const 
 
     inet_ntop(AF_INET, &pkt->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
     inet_ntop(AF_INET, &pkt->dst_ip, ip_addr_buf1, INET_ADDRSTRLEN);
-    printf("[%s]: %s > %s, length=%d\n", (pkt->src_ip == info->if_addr) ? "out" : " in",
-            ip_addr_buf, ip_addr_buf1, ntohs(pkt->length));
+    printf("[%s]: %s > %s, length=%d\n", info->if_name, ip_addr_buf, ip_addr_buf1, ntohs(pkt->length));
 
 #if 0
     int i;
