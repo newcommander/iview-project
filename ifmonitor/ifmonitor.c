@@ -476,7 +476,8 @@ int main(int argc, char **argv)
     p = if_list;
     while (p) {
         if (((p->flags & PCAP_IF_CONNECTION_STATUS) != PCAP_IF_CONNECTION_STATUS_CONNECTED) ||
-            (p->flags & PCAP_IF_LOOPBACK) || !(p->flags & PCAP_IF_UP) || !(p->flags & PCAP_IF_RUNNING)) {
+            (p->flags & PCAP_IF_LOOPBACK) || !(p->flags & PCAP_IF_UP) || !(p->flags & PCAP_IF_RUNNING) ||
+            !(strncmp(p->name, "virbr", 5))) {
             p = p->next;
             continue;
         }
