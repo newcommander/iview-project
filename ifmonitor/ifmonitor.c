@@ -17,6 +17,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <pthread.h>
+#include <termios.h>
 #include <pcap/pcap.h>
 #include "list.h"
 
@@ -342,30 +343,42 @@ void* timing_fn(void *arg)
 {
     struct thread_info *ti = NULL;
     struct timeval tv;
-    int ret;
+    __u32 bytes_in, bytes_out;
+    char *print_buf = (char*)arg;
+    int ret, buf_len;
+
+    buf_len = strlen(print_buf) + 1;
+    memset(print_buf, 0, buf_len);
 
     while (1) {
         tv.tv_sec = 1;
         tv.tv_usec = 0;
-        ret = select(0, NULL, NULL, NULL, &tv);
+        ret = select(0, NULL, NULL, NULL, &tv); // Timer
         if (ret < 0) {
             printf("Timer select error: %s\n", strerror(errno));
             return NULL;
         }
-        int head = 1;
+
+        print_buf[0] = '\0';
         list_for_each_entry(ti, &thread_list, list) {
-            if (head)
-                printf("\r");
-            else
-                printf(" | ");
-            head = 0;
-            printf("[%s: IN=%u, OUT=%u]", ti->if_name, ti->bytes_in, ti->bytes_out);
-            ti->if_state.bandwidth_in[ti->if_state.curr_index] = ti->bytes_in;
-            ti->if_state.bandwidth_out[ti->if_state.curr_index] = ti->bytes_out;
-            ti->bytes_in = 0;
-            ti->bytes_out = 0;
+            bytes_in = ti->bytes_in;
+            bytes_out = ti->bytes_out;
+            ti->bytes_in -= bytes_in;
+            ti->bytes_out -= bytes_out;
+            ti->if_state.bandwidth_in[ti->if_state.curr_index] = bytes_in;
+            ti->if_state.bandwidth_out[ti->if_state.curr_index] = bytes_out;
             ti->if_state.curr_index = (ti->if_state.curr_index + 1) % STATE_BUFFER_LENGTH;
+
+            snprintf(print_buf + strlen(print_buf), buf_len, "[%s: IN=%u.%02uKB/s, OUT=%u.%02uKB/s] ", ti->if_name,
+                    bytes_in / 1024, (bytes_in % 1024) * 100 / 1024,
+                    bytes_out / 1024, (bytes_out % 1024) * 100 / 1024);
         }
+
+        if (strlen(print_buf) < buf_len)
+            memset(print_buf + strlen(print_buf), ' ', buf_len - strlen(print_buf) - 1);
+        print_buf[buf_len - 1] = '\0';
+        printf("\r%s", print_buf);
+
         fflush(stdout);
     }
     return NULL;
@@ -397,9 +410,11 @@ void sigint_handler(int signal, siginfo_t *sg_info, void *unused)
 int main(int argc, char **argv)
 {
     struct thread_info *ti = NULL, *ti_tmp;
+    struct winsize w_size;
     struct sigaction sa;
     pcap_if_t *if_list = NULL, *p;
     char errbuf[PCAP_ERRBUF_SIZE];
+    char *print_buf = NULL;
     int ret;
 
     sa.sa_flags = SA_SIGINFO;
@@ -421,8 +436,20 @@ int main(int argc, char **argv)
     INIT_LIST_HEAD(&thread_list);
     memset(errbuf, 0, PCAP_ERRBUF_SIZE);
 
+    ioctl(STDIN_FILENO, TIOCGWINSZ, &w_size);
+    if (w_size.ws_col <= 0)
+        w_size.ws_col = 86;
+
+    print_buf = (char*)calloc(w_size.ws_col, 1);
+    if (!print_buf) {
+        printf("Alloc print buffer failed.\n");
+        return 1;
+    }
+    memset(print_buf, 'A', w_size.ws_col - 1);
+
     if (pcap_findalldevs(&if_list, errbuf) < 0) {
         printf("find device failed: %s\n", errbuf);
+        free(print_buf);
         return 1;
     }
 
@@ -467,9 +494,9 @@ int main(int argc, char **argv)
     }
 
     if (!list_empty_careful(&thread_list)) {
-        ret = pthread_create(&timing_th, NULL, timing_fn, NULL);
+        ret = pthread_create(&timing_th, NULL, timing_fn, print_buf);
         if (ret != 0) {
-            printf("Create timing thread for failed: %s\n", strerror(ret));
+            printf("Create timing thread failed: %s\n", strerror(ret));
             list_for_each_entry(ti, &thread_list, list)
                 pcap_breakloop(ti->handle);
         }
@@ -488,6 +515,7 @@ int main(int argc, char **argv)
     }
 
     pcap_freealldevs(if_list);
+    free(print_buf);
 
     return 0;
 }
