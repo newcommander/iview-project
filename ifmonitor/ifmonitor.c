@@ -389,18 +389,21 @@ void sigint_handler(int signal, siginfo_t *sg_info, void *unused)
     struct thread_info *ti = NULL;
     int ret;
 
-    ret = pthread_cancel(timing_th);
-    if (ret != 0) {
-        printf("Cancel timing thread error: %s\n", strerror(ret));
-        // TODO: then what ?
-        return;
-    }
+    if (timing_th != 0) {
+        ret = pthread_cancel(timing_th);
+        if (ret != 0) {
+            printf("Cancel timing thread error: %s\n", strerror(ret));
+            // TODO: then what ?
+            return;
+        }
 
-    ret = pthread_join(timing_th, NULL);
-    if (ret != 0) {
-        printf("Join timing thread error: %s\n", strerror(ret));
-        // TODO: then what ?
-        return;
+        ret = pthread_join(timing_th, NULL);
+        if (ret != 0) {
+            printf("Join timing thread error: %s\n", strerror(ret));
+            // TODO: then what ?
+            return;
+        }
+        timing_th = 0;
     }
 
     list_for_each_entry(ti, &thread_list, list)
@@ -435,6 +438,7 @@ int main(int argc, char **argv)
 
     INIT_LIST_HEAD(&thread_list);
     memset(errbuf, 0, PCAP_ERRBUF_SIZE);
+    timing_th = 0;
 
     ioctl(STDIN_FILENO, TIOCGWINSZ, &w_size);
     if (w_size.ws_col <= 0)
