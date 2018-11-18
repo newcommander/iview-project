@@ -60,6 +60,15 @@ static inline int list_empty_careful(const struct list_head *head)
     return (next == head) && (next == head->prev);
 }
 
+static inline void move_list(struct list_head *dst, struct list_head *src)
+{
+    src->prev->next = dst;
+    src->next->prev = dst;
+    dst->next = src->next;
+    dst->prev = src->prev;
+    INIT_LIST_HEAD(src);
+}
+
 #define list_entry(ptr, type, member) \
     container_of(ptr, type, member)
 

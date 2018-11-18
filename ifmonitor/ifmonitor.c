@@ -37,11 +37,22 @@ struct ip_packet {
     __u8 data[];
 };
 
+struct link_transfer {
+    struct list_head list;
+    __u32 src_ip;       // network bytes order
+    __u32 dst_ip;       // network bytes order
+    __u16 src2dst_len;  // host bytes order
+    __u16 dst2src_len;  // host bytes order
+};
+
 #define STATE_BUFFER_LENGTH 10
 struct state_info {
     int curr_index;
     __u32 bandwidth_in[STATE_BUFFER_LENGTH];  // in byte
     __u32 bandwidth_out[STATE_BUFFER_LENGTH];  // in byte
+    struct list_head link_list;
+    pthread_mutex_t link_list_mutex;
+    int link_count;
 };
 
 struct thread_info {
@@ -68,6 +79,10 @@ struct thread_info {
     __u32 bytes_in;
     __u32 bytes_out;
     struct state_info if_state;
+
+    struct list_head trans_list;
+    pthread_mutex_t trans_list_mutex;
+    __u32 trans_count;
 };
 
 static struct list_head thread_list;
@@ -75,17 +90,18 @@ static pthread_t timing_th;
 
 static void packet_process(u_char *arg, const struct pcap_pkthdr *header, const u_char *packet)
 {
-    struct thread_info *info = (struct thread_info*)arg;
+    struct thread_info *ti = (struct thread_info*)arg;
     struct ethernet_frame *frame = NULL;
     struct ip_packet *pkt = NULL;
+    struct link_transfer *trans = NULL;
     char ip_addr_buf[INET_ADDRSTRLEN], ip_addr_buf1[INET_ADDRSTRLEN];
 
-    if (!info) {
+    if (!ti || !packet) {
         printf("packet_process: Invalid parameter.\n");
         return;
     }
 
-    switch (info->data_link) {
+    switch (ti->data_link) {
     case ETHERNET:
         frame = (struct ethernet_frame*)packet;
 #if 0
@@ -98,18 +114,32 @@ static void packet_process(u_char *arg, const struct pcap_pkthdr *header, const 
         pkt = (struct ip_packet*)packet;
         break;
     default:
-        printf("[%s] Invalid data link type: %d.\n", info->if_name, info->data_link);
+        printf("[%s] Invalid data link type: %d.\n", ti->if_name, ti->data_link);
         return;
     }
 
-    if (info->if_addr == pkt->src_ip)
-        info->bytes_out += ntohs(pkt->length);
-    else
-        info->bytes_in += ntohs(pkt->length);
+    trans = (struct link_transfer*)calloc(1, sizeof(struct link_transfer));
+    if (trans) {
+        trans->src_ip = pkt->src_ip;
+        trans->dst_ip = pkt->dst_ip;
+        trans->src2dst_len = ntohs(pkt->length);
+        pthread_mutex_lock(&ti->trans_list_mutex);
+        list_add_tail(&trans->list, &ti->trans_list);
+        ti->trans_count++;
+        inet_ntop(AF_INET, &pkt->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &pkt->dst_ip, ip_addr_buf1, INET_ADDRSTRLEN);
+        printf("new src=%s, dst=%s, len=%d\n", ip_addr_buf, ip_addr_buf1, ntohs(pkt->length));
+        pthread_mutex_unlock(&ti->trans_list_mutex);
+    } else {
+        inet_ntop(AF_INET, &pkt->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &pkt->dst_ip, ip_addr_buf1, INET_ADDRSTRLEN);
+        printf("[%s] Alloc packet transfer failed: src_ip: %s, dst_ip: %s, length=%d\n", ti->if_name, ip_addr_buf, ip_addr_buf1, ntohs(pkt->length));
+    }
 
-    inet_ntop(AF_INET, &pkt->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
-    inet_ntop(AF_INET, &pkt->dst_ip, ip_addr_buf1, INET_ADDRSTRLEN);
-    //printf("[%s]: %s > %s, length=%d\n", info->if_name, ip_addr_buf, ip_addr_buf1, ntohs(pkt->length));
+    if (ti->if_addr == pkt->src_ip)
+        ti->bytes_out += ntohs(pkt->length);
+    else
+        ti->bytes_in += ntohs(pkt->length);
 
 #if 0
     int i;
@@ -126,88 +156,88 @@ static void packet_process(u_char *arg, const struct pcap_pkthdr *header, const 
 #endif
 }
 
-static int get_device_config(struct thread_info *info)
+static int get_device_config(struct thread_info *ti)
 {
     struct sockaddr_in *sin;
     struct ifreq ifr;
     int fd = 0, len;
 
-    if (!info || !info->if_name)
+    if (!ti || !ti->if_name)
         return -1;
 
     fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) {
-        printf("[%s] Create socket failed: %s\n", info->if_name, strerror(errno));
+        printf("[%s] Create socket failed: %s\n", ti->if_name, strerror(errno));
         return -1;
     }
 
     memset(&ifr, 0, sizeof(ifr));
-    len = sizeof(ifr.ifr_name) < strlen(info->if_name) ? sizeof(ifr.ifr_name) : strlen(info->if_name);
-    strncpy(ifr.ifr_name, info->if_name, len);
+    len = sizeof(ifr.ifr_name) < strlen(ti->if_name) ? sizeof(ifr.ifr_name) : strlen(ti->if_name);
+    strncpy(ifr.ifr_name, ti->if_name, len);
     ifr.ifr_addr.sa_family = AF_INET;
 
     /*cmds defined in linux/sockios.h */
     if (ioctl(fd, SIOCGIFFLAGS, (char*)&ifr) < 0) {
-        printf("[%s] SIOCGIFFLAGS: %s\n", info->if_name, strerror(errno));
+        printf("[%s] SIOCGIFFLAGS: %s\n", ti->if_name, strerror(errno));
         close(fd);
         return -1;
     }
     if (ifr.ifr_flags & IFF_POINTOPOINT)
-        info->if_is_p2p = 1;
+        ti->if_is_p2p = 1;
     else
-        info->if_is_p2p = 0;
+        ti->if_is_p2p = 0;
 
     if (ioctl(fd, SIOCGIFADDR, (char*)&ifr) < 0) {
         if (errno == EADDRNOTAVAIL)
-            printf("[%s] address not assigned\n", info->if_name);
+            printf("[%s] address not assigned\n", ti->if_name);
         else
-            printf("[%s] SIOCGIFADDR: %s\n", info->if_name, strerror(errno));
+            printf("[%s] SIOCGIFADDR: %s\n", ti->if_name, strerror(errno));
         close(fd);
         return -1;
     }
     sin = (struct sockaddr_in*)&ifr.ifr_addr;
-    info->if_addr = (__u32)sin->sin_addr.s_addr;
+    ti->if_addr = (__u32)sin->sin_addr.s_addr;
 
-    if (info->if_is_p2p) {
+    if (ti->if_is_p2p) {
         if (ioctl(fd, SIOCGIFDSTADDR, (char*)&ifr) < 0) {
-            printf("[%s] SIOCGIFDSTADDR: %s\n", info->if_name, strerror(errno));
+            printf("[%s] SIOCGIFDSTADDR: %s\n", ti->if_name, strerror(errno));
             close(fd);
             return -1;
         }
         sin = (struct sockaddr_in*)&ifr.ifr_addr;
-        info->if_dstaddr = (__u32)sin->sin_addr.s_addr;
+        ti->if_dstaddr = (__u32)sin->sin_addr.s_addr;
     } else {
         if (ioctl(fd, SIOCGIFNETMASK, (char*)&ifr) < 0) {
-            printf("[%s] SIOCGIFNETMASK: %s\n", info->if_name, strerror(errno));
+            printf("[%s] SIOCGIFNETMASK: %s\n", ti->if_name, strerror(errno));
             close(fd);
             return -1;
         }
         sin = (struct sockaddr_in*)&ifr.ifr_addr;
-        info->if_netmask = (__u32)sin->sin_addr.s_addr;
-        info->if_network = info->if_addr & info->if_netmask;
+        ti->if_netmask = (__u32)sin->sin_addr.s_addr;
+        ti->if_network = ti->if_addr & ti->if_netmask;
 
         if (ioctl(fd, SIOCGIFBRDADDR, (char*)&ifr) < 0) {
-            printf("[%s] SIOCGIFBRDADDR: %s\n", info->if_name, strerror(errno));
+            printf("[%s] SIOCGIFBRDADDR: %s\n", ti->if_name, strerror(errno));
             close(fd);
             return -1;
         }
         sin = (struct sockaddr_in*)&ifr.ifr_addr;
-        info->if_broadaddr = (__u32)sin->sin_addr.s_addr;
+        ti->if_broadaddr = (__u32)sin->sin_addr.s_addr;
     }
 
 #if 0
     char ip_addr_buf[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &info->if_addr, ip_addr_buf, INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &ti->if_addr, ip_addr_buf, INET_ADDRSTRLEN);
     printf("addr: %s\n", ip_addr_buf);
-    if (info->if_is_p2p) {
-        inet_ntop(AF_INET, &info->if_dstaddr, ip_addr_buf, INET_ADDRSTRLEN);
+    if (ti->if_is_p2p) {
+        inet_ntop(AF_INET, &ti->if_dstaddr, ip_addr_buf, INET_ADDRSTRLEN);
         printf("dstaddr: %s\n", ip_addr_buf);
     } else {
-        inet_ntop(AF_INET, &info->if_netmask, ip_addr_buf, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &ti->if_netmask, ip_addr_buf, INET_ADDRSTRLEN);
         printf("netmask: %s\n", ip_addr_buf);
-        inet_ntop(AF_INET, &info->if_network, ip_addr_buf, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &ti->if_network, ip_addr_buf, INET_ADDRSTRLEN);
         printf("network: %s\n", ip_addr_buf);
-        inet_ntop(AF_INET, &info->if_broadaddr, ip_addr_buf, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &ti->if_broadaddr, ip_addr_buf, INET_ADDRSTRLEN);
         printf("broadaddr: %s\n", ip_addr_buf);
     }
 #endif
@@ -218,73 +248,73 @@ static int get_device_config(struct thread_info *info)
 
 void* thread_fn(void *arg)
 {
-    struct thread_info *info = (struct thread_info*)arg;
+    struct thread_info *ti = (struct thread_info*)arg;
     int ret, i, *dl_list = NULL;
 
-    if (!info)
+    if (!ti)
         return NULL;
 
-    if (get_device_config(info) < 0) {
-        printf("[%s]: Get device config failed.\n", info->if_name);
-        return NULL;
-    }
-
-    info->handle = pcap_create(info->if_name, info->errbuf);
-    if (!info->handle) {
-        printf("[%s] Create handle failed: %s\n", info->if_name, info->errbuf);
+    if (get_device_config(ti) < 0) {
+        printf("[%s]: Get device config failed.\n", ti->if_name);
         return NULL;
     }
 
-    ret = pcap_activate(info->handle);
+    ti->handle = pcap_create(ti->if_name, ti->errbuf);
+    if (!ti->handle) {
+        printf("[%s] Create handle failed: %s\n", ti->if_name, ti->errbuf);
+        return NULL;
+    }
+
+    ret = pcap_activate(ti->handle);
     if (ret < 0) {
         switch (ret) {
         case PCAP_ERROR_ACTIVATED:
-            printf("[%s] The handle has already been activated.\n", info->if_name);
+            printf("[%s] The handle has already been activated.\n", ti->if_name);
             break;
         case PCAP_ERROR_NO_SUCH_DEVICE:
-            printf("[%s] The capture source doesn't exist.\n", info->if_name);
+            printf("[%s] The capture source doesn't exist.\n", ti->if_name);
             break;
         case PCAP_ERROR_PERM_DENIED:
-            printf("[%s] The process doesn't have permission to open the capture source.\n", info->if_name);
+            printf("[%s] The process doesn't have permission to open the capture source.\n", ti->if_name);
             break;
         case PCAP_ERROR_PROMISC_PERM_DENIED:
-            printf("[%s] The process doesn't have permission to put it into promiscuous mode.\n", info->if_name);
+            printf("[%s] The process doesn't have permission to put it into promiscuous mode.\n", ti->if_name);
             break;
         case PCAP_ERROR_RFMON_NOTSUP:
-            printf("[%s] The capture source doesn't support monitor mode.\n", info->if_name);
+            printf("[%s] The capture source doesn't support monitor mode.\n", ti->if_name);
             break;
         case PCAP_ERROR_IFACE_NOT_UP:
-            printf("[%s] The capture source device is not up.\n", info->if_name);
+            printf("[%s] The capture source device is not up.\n", ti->if_name);
             break;
         case PCAP_ERROR:
             // TODO
-            pcap_perror(info->handle, "Active capture device failed");
+            pcap_perror(ti->handle, "Active capture device failed");
             break;
         }
         goto close;
     } else if (ret > 0) {
         switch (ret) {
         case PCAP_WARNING_PROMISC_NOTSUP:
-            printf("[%s] The capture source doesn't support promiscuous mode.\n", info->if_name);
+            printf("[%s] The capture source doesn't support promiscuous mode.\n", ti->if_name);
             break;
         case PCAP_WARNING_TSTAMP_TYPE_NOTSUP:
-            printf("[%s] The time stamp type specified isn't supported by the capture source.\n", info->if_name);
+            printf("[%s] The time stamp type specified isn't supported by the capture source.\n", ti->if_name);
             break;
         case PCAP_WARNING:
-            pcap_perror(info->handle, "Warning: Active capture device");
+            pcap_perror(ti->handle, "Warning: Active capture device");
             break;
         }
     }
 
-    ret = pcap_list_datalinks(info->handle, &dl_list);
+    ret = pcap_list_datalinks(ti->handle, &dl_list);
     if (ret < 0) {
         switch (ret) {
         case PCAP_ERROR_NOT_ACTIVATED:
-            printf("[%s] Cannot get datalink list, the capture source has not yet been activated.\n", info->if_name);
+            printf("[%s] Cannot get datalink list, the capture source has not yet been activated.\n", ti->if_name);
             break;
         case PCAP_ERROR:
             // TODO
-            pcap_perror(info->handle, "Get datalink list failed");
+            pcap_perror(ti->handle, "Get datalink list failed");
             break;
         }
         goto close;
@@ -292,63 +322,97 @@ void* thread_fn(void *arg)
     for (i = 0; i < ret; i++) {
         // TODO: how to select ?
         if (dl_list[i] == pcap_datalink_name_to_val("EN10MB")) {
-            info->data_link = ETHERNET;
+            ti->data_link = ETHERNET;
             break;
         }
         if (dl_list[i] == pcap_datalink_name_to_val("RAW")) {
-            info->data_link = RAW;
+            ti->data_link = RAW;
             break;
         }
     }
     if (i == ret) {
-        printf("[%s] Don't support datalink 'Ethernet' and 'Raw'.\n", info->if_name);
+        printf("[%s] Don't support datalink 'Ethernet' and 'Raw'.\n", ti->if_name);
         goto free_data_links;
     }
 
-    if (pcap_set_datalink(info->handle, dl_list[i]) < 0) {
+    if (pcap_set_datalink(ti->handle, dl_list[i]) < 0) {
         // TODO
-        pcap_perror(info->handle, "Set datalink failed");
+        pcap_perror(ti->handle, "Set datalink failed");
         goto free_data_links;
     }
 
-    snprintf(info->filter_expression, FILTER_EXP_LEN, "ip");
+    snprintf(ti->filter_expression, FILTER_EXP_LEN, "ip");
 
-    if (pcap_compile(info->handle, &info->filter, info->filter_expression, 1, info->if_netmask) < 0) {
-        pcap_perror(info->handle, "Compile filter failed");
+    if (pcap_compile(ti->handle, &ti->filter, ti->filter_expression, 1, ti->if_netmask) < 0) {
+        pcap_perror(ti->handle, "Compile filter failed");
         goto free_data_links;
     }
 
-    if (pcap_setfilter(info->handle, &info->filter) < 0) {
-        pcap_perror(info->handle, "Set filter failed");
+    if (pcap_setfilter(ti->handle, &ti->filter) < 0) {
+        pcap_perror(ti->handle, "Set filter failed");
         goto free_code;
     }
 
-    printf("[%s] Start capture... %s\n", info->if_name, (info->data_link == ETHERNET) ? "ETHERNET" : "RAW");
+    printf("[%s] Start capture... %s\n", ti->if_name, (ti->data_link == ETHERNET) ? "ETHERNET" : "RAW");
 
-    ret = pcap_loop(info->handle, -1, packet_process, (void*)info);
+    ret = pcap_loop(ti->handle, -1, packet_process, (void*)ti);
     if (ret == -2)
-        printf("\r[%s] Cancled.\n", info->if_name);
+        printf("\r[%s] Cancled.\n", ti->if_name);
 
 free_code:
-    pcap_freecode(&info->filter);
+    pcap_freecode(&ti->filter);
 free_data_links:
     pcap_free_datalinks(dl_list);
 close:
-    pcap_close(info->handle);
+    pcap_close(ti->handle);
 
     return NULL;
 }
 
+void merge_link_transfer(struct thread_info *ti, const struct list_head *trans_list)
+{
+    struct link_transfer *trans, *trans_tmp, *obj, *obj_tmp;
+    struct list_head *link_list = &ti->if_state.link_list;
+    char ip_addr_buf[INET_ADDRSTRLEN], ip_addr_buf1[INET_ADDRSTRLEN];
+    int done;
+
+    pthread_mutex_lock(&ti->if_state.link_list_mutex);
+    list_for_each_entry_safe(trans, trans_tmp, trans_list, list) {
+        done = 0;
+        inet_ntop(AF_INET, &trans->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &trans->dst_ip, ip_addr_buf1, INET_ADDRSTRLEN);
+        list_for_each_entry_safe(obj, obj_tmp, link_list, list) {
+            if ((trans->src_ip == obj->src_ip) && (trans->dst_ip == obj->dst_ip)) {
+                obj->src2dst_len += trans->src2dst_len;
+                printf("add src=%s, dst=%s, +%d, len=%d\n", ip_addr_buf, ip_addr_buf1, trans->src2dst_len, obj->src2dst_len);
+                done = 1;
+            } else if ((trans->src_ip == obj->dst_ip) && (trans->dst_ip == obj->src_ip)) {
+                obj->dst2src_len += trans->src2dst_len;
+                printf("add dst=%s, src=%s, +%d, len=%d\n", ip_addr_buf1, ip_addr_buf, trans->src2dst_len, obj->dst2src_len);
+                done = 1;
+            }
+        }
+        if (!done) {
+            printf("merge src=%s, dst=%s, len=%d\n", ip_addr_buf, ip_addr_buf1, trans->src2dst_len);
+            list_del(&trans->list);
+            list_add_tail(link_list, &trans->list);
+            list_for_each_entry(obj, link_list, list) {
+                printf("watch src=%s, dst=%s, src2dst_len=%d, dst2src_len=%d\n", ip_addr_buf, ip_addr_buf1, obj->src2dst_len, obj->dst2src_len);
+            }
+        }
+    }
+    pthread_mutex_unlock(&ti->if_state.link_list_mutex);
+}
+
 void* timing_fn(void *arg)
 {
-    struct thread_info *ti = NULL;
+    struct link_transfer *trans, *trans_tmp;
+    struct list_head trans_list;
+    struct thread_info *ti;
     struct timeval tv;
     __u32 bytes_in, bytes_out;
-    char *print_buf = (char*)arg;
-    int ret, buf_len;
-
-    buf_len = strlen(print_buf) + 1;
-    memset(print_buf, 0, buf_len);
+    int ret;
+    char ip_addr_buf[INET_ADDRSTRLEN], ip_addr_buf1[INET_ADDRSTRLEN];
 
     while (1) {
         tv.tv_sec = 1;
@@ -359,7 +423,6 @@ void* timing_fn(void *arg)
             return NULL;
         }
 
-        print_buf[0] = '\0';
         list_for_each_entry(ti, &thread_list, list) {
             bytes_in = ti->bytes_in;
             bytes_out = ti->bytes_out;
@@ -369,18 +432,43 @@ void* timing_fn(void *arg)
             ti->if_state.bandwidth_out[ti->if_state.curr_index] = bytes_out;
             ti->if_state.curr_index = (ti->if_state.curr_index + 1) % STATE_BUFFER_LENGTH;
 
+            pthread_mutex_lock(&ti->trans_list_mutex);
+            move_list(&trans_list, &ti->trans_list);
+            ti->trans_count = 0;
+            pthread_mutex_unlock(&ti->trans_list_mutex);
+            merge_link_transfer(ti, &trans_list);
+        }
+
+        list_for_each_entry_safe(trans, trans_tmp, &trans_list, list) {
+            inet_ntop(AF_INET, &trans->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
+            inet_ntop(AF_INET, &trans->dst_ip, ip_addr_buf1, INET_ADDRSTRLEN);
+            printf("free src=%s, dst=%s, len=%d\n", ip_addr_buf, ip_addr_buf1, trans->src2dst_len);
+            list_del(&trans->list);
+            free(trans);
+        }
+
+#if 0
+        char *print_buf = (char*)arg;
+        int buf_len;
+
+        buf_len = strlen(print_buf) + 1;
+        memset(print_buf, 0, buf_len);
+
+        print_buf[0] = '\0';
+        list_for_each_entry(ti, &thread_list, list) {
             snprintf(print_buf + strlen(print_buf), buf_len, "[%s: IN=%u.%02uKB/s, OUT=%u.%02uKB/s] ", ti->if_name,
                     bytes_in / 1024, (bytes_in % 1024) * 100 / 1024,
                     bytes_out / 1024, (bytes_out % 1024) * 100 / 1024);
         }
-
         if (strlen(print_buf) < buf_len)
             memset(print_buf + strlen(print_buf), ' ', buf_len - strlen(print_buf) - 1);
         print_buf[buf_len - 1] = '\0';
         printf("\r%s", print_buf);
 
         fflush(stdout);
+#endif
     }
+
     return NULL;
 }
 
@@ -412,6 +500,7 @@ void sigint_handler(int signal, siginfo_t *sg_info, void *unused)
 
 int main(int argc, char **argv)
 {
+    struct link_transfer *trans, *trans_tmp;
     struct thread_info *ti = NULL, *ti_tmp;
     struct winsize w_size;
     struct sigaction sa;
@@ -487,6 +576,10 @@ int main(int argc, char **argv)
             printf("Allocate memory for capture [%s] failed.\n", p->name);
         strncpy(ti->if_name, p->name, (strlen(p->name) > 63) ? 63 : strlen(p->name));
         ti->if_state.curr_index = 0;
+        INIT_LIST_HEAD(&ti->trans_list);
+        INIT_LIST_HEAD(&ti->if_state.link_list);
+        pthread_mutex_init(&ti->trans_list_mutex, NULL);
+        pthread_mutex_init(&ti->if_state.link_list_mutex, NULL);
         list_add_tail(&ti->list, &thread_list);
 
         ret = pthread_create(&ti->th, NULL, thread_fn, ti);
@@ -512,6 +605,13 @@ int main(int argc, char **argv)
         ret = pthread_join(ti->th, NULL);
         if (ret == 0) {
             list_del(&ti->list);
+            pthread_mutex_destroy(&ti->trans_list_mutex);
+            pthread_mutex_destroy(&ti->if_state.link_list_mutex);
+            list_for_each_entry_safe(trans, trans_tmp, &ti->if_state.link_list, list) {
+                list_del(&trans->list);
+                printf("free len=%d\n", trans->src2dst_len);
+                free(trans);
+            }
             free(ti);
         } else {
             printf("Join error: [%s] %s\n", ti->if_name, strerror(ret));
