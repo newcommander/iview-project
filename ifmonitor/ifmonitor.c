@@ -126,9 +126,6 @@ static void packet_process(u_char *arg, const struct pcap_pkthdr *header, const 
         pthread_mutex_lock(&ti->trans_list_mutex);
         list_add_tail(&trans->list, &ti->trans_list);
         ti->trans_count++;
-        inet_ntop(AF_INET, &pkt->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
-        inet_ntop(AF_INET, &pkt->dst_ip, ip_addr_buf1, INET_ADDRSTRLEN);
-        printf("new src=%s, dst=%s, len=%d\n", ip_addr_buf, ip_addr_buf1, ntohs(pkt->length));
         pthread_mutex_unlock(&ti->trans_list_mutex);
     } else {
         inet_ntop(AF_INET, &pkt->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
@@ -373,48 +370,43 @@ void merge_link_transfer(struct thread_info *ti, const struct list_head *trans_l
 {
     struct link_transfer *trans, *trans_tmp, *obj, *obj_tmp;
     struct list_head *link_list = &ti->if_state.link_list;
-    char ip_addr_buf[INET_ADDRSTRLEN], ip_addr_buf1[INET_ADDRSTRLEN];
     int done;
 
     pthread_mutex_lock(&ti->if_state.link_list_mutex);
+    list_for_each_entry_safe(trans, trans_tmp, link_list, list) {
+        list_del(&trans->list);
+        free(trans);
+    }
     list_for_each_entry_safe(trans, trans_tmp, trans_list, list) {
         done = 0;
-        inet_ntop(AF_INET, &trans->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
-        inet_ntop(AF_INET, &trans->dst_ip, ip_addr_buf1, INET_ADDRSTRLEN);
         list_for_each_entry_safe(obj, obj_tmp, link_list, list) {
             if ((trans->src_ip == obj->src_ip) && (trans->dst_ip == obj->dst_ip)) {
                 obj->src2dst_len += trans->src2dst_len;
-                printf("add src=%s, dst=%s, +%d, len=%d\n", ip_addr_buf, ip_addr_buf1, trans->src2dst_len, obj->src2dst_len);
                 done = 1;
             } else if ((trans->src_ip == obj->dst_ip) && (trans->dst_ip == obj->src_ip)) {
                 obj->dst2src_len += trans->src2dst_len;
-                printf("add dst=%s, src=%s, +%d, len=%d\n", ip_addr_buf1, ip_addr_buf, trans->src2dst_len, obj->dst2src_len);
                 done = 1;
             }
         }
-        if (!done) {
-            printf("merge src=%s, dst=%s, len=%d\n", ip_addr_buf, ip_addr_buf1, trans->src2dst_len);
-            list_del(&trans->list);
-            list_add_tail(link_list, &trans->list);
-            list_for_each_entry(obj, link_list, list) {
-                printf("watch src=%s, dst=%s, src2dst_len=%d, dst2src_len=%d\n", ip_addr_buf, ip_addr_buf1, obj->src2dst_len, obj->dst2src_len);
-            }
-        }
+        list_del(&trans->list);
+        if (done)
+            free(trans);
+        else
+            list_add_tail(&trans->list, link_list);
     }
     pthread_mutex_unlock(&ti->if_state.link_list_mutex);
 }
 
 void* timing_fn(void *arg)
 {
-    struct link_transfer *trans, *trans_tmp;
     struct list_head trans_list;
     struct thread_info *ti;
     struct timeval tv;
     __u32 bytes_in, bytes_out;
     int ret;
-    char ip_addr_buf[INET_ADDRSTRLEN], ip_addr_buf1[INET_ADDRSTRLEN];
 
     while (1) {
+        pthread_testcancel();
         tv.tv_sec = 1;
         tv.tv_usec = 0;
         ret = select(0, NULL, NULL, NULL, &tv); // Timer
@@ -437,14 +429,6 @@ void* timing_fn(void *arg)
             ti->trans_count = 0;
             pthread_mutex_unlock(&ti->trans_list_mutex);
             merge_link_transfer(ti, &trans_list);
-        }
-
-        list_for_each_entry_safe(trans, trans_tmp, &trans_list, list) {
-            inet_ntop(AF_INET, &trans->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
-            inet_ntop(AF_INET, &trans->dst_ip, ip_addr_buf1, INET_ADDRSTRLEN);
-            printf("free src=%s, dst=%s, len=%d\n", ip_addr_buf, ip_addr_buf1, trans->src2dst_len);
-            list_del(&trans->list);
-            free(trans);
         }
 
 #if 0
@@ -609,7 +593,6 @@ int main(int argc, char **argv)
             pthread_mutex_destroy(&ti->if_state.link_list_mutex);
             list_for_each_entry_safe(trans, trans_tmp, &ti->if_state.link_list, list) {
                 list_del(&trans->list);
-                printf("free len=%d\n", trans->src2dst_len);
                 free(trans);
             }
             free(ti);
