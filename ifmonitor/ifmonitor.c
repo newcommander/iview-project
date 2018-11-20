@@ -366,17 +366,42 @@ close:
     return NULL;
 }
 
+/* in decrease order */
+void sort_list_by_src2dst_len(struct list_head *link_list)
+{
+    struct link_transfer *trans, *trans_tmp;
+    struct link_transfer *_trans, *_trans_tmp;
+    struct list_head order_list;
+
+    if (list_empty(link_list))
+        return;
+
+    INIT_LIST_HEAD(&order_list);
+    list_for_each_entry_safe(trans, trans_tmp, link_list, list) {
+        list_for_each_entry_safe(_trans, _trans_tmp, &order_list, list) {
+            if (trans->src2dst_len >= _trans->src2dst_len)
+                break;
+        }
+        list_del(&trans->list);
+        list_add_tail(&trans->list, &_trans->list);
+    }
+    move_list(link_list, &order_list);
+}
+
 void merge_link_transfer(struct thread_info *ti, const struct list_head *trans_list)
 {
     struct link_transfer *trans, *trans_tmp, *obj, *obj_tmp;
     struct list_head *link_list = &ti->if_state.link_list;
+    pthread_mutex_t *link_list_mutex = &ti->if_state.link_list_mutex;
     int done;
 
-    pthread_mutex_lock(&ti->if_state.link_list_mutex);
+    pthread_mutex_lock(link_list_mutex);
+
     list_for_each_entry_safe(trans, trans_tmp, link_list, list) {
         list_del(&trans->list);
         free(trans);
     }
+
     list_for_each_entry_safe(trans, trans_tmp, trans_list, list) {
         done = 0;
         list_for_each_entry_safe(obj, obj_tmp, link_list, list) {
@@ -394,7 +419,10 @@ void merge_link_transfer(struct thread_info *ti, const struct list_head *trans_l
         else
             list_add_tail(&trans->list, link_list);
     }
-    pthread_mutex_unlock(&ti->if_state.link_list_mutex);
+
+    sort_list_by_src2dst_len(link_list);
+
+    pthread_mutex_unlock(link_list_mutex);
 }
 
 void* timing_fn(void *arg)
