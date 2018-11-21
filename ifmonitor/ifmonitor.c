@@ -19,6 +19,7 @@
 #include <pthread.h>
 #include <termios.h>
 #include <pcap/pcap.h>
+#include <cjson/cJSON.h>
 #include "list.h"
 
 struct ethernet_frame {
@@ -388,6 +389,57 @@ void sort_list_by_src2dst_len(struct list_head *link_list)
     move_list(link_list, &order_list);
 }
 
+char* parse_link_list_to_json(struct thread_info *ti)
+{
+    struct list_head *link_list = &ti->if_state.link_list;
+    struct link_transfer *trans;
+    pthread_mutex_t *link_list_mutex = &ti->if_state.link_list_mutex;
+    cJSON *root = NULL, *links = NULL, *link = NULL;
+    char *string = NULL, ip_addr_buf[INET_ADDRSTRLEN];
+
+    memset(ip_addr_buf, 0, INET_ADDRSTRLEN);
+
+    root = cJSON_CreateObject();
+    if (!root)
+        return NULL;
+
+    if (cJSON_AddStringToObject(root, "if_name", ti->if_name) == NULL)
+        goto end;
+
+    links = cJSON_AddArrayToObject(root, "links");
+    if (!links)
+        goto end;
+
+    pthread_mutex_lock(link_list_mutex);
+
+    list_for_each_entry(trans, link_list, list) {
+        link = cJSON_CreateObject();
+        if (!link)
+            goto end;
+
+        inet_ntop(AF_INET, &trans->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
+        if (cJSON_AddStringToObject(link, "s_ip", ip_addr_buf) == NULL)
+            goto end;
+        inet_ntop(AF_INET, &trans->dst_ip, ip_addr_buf, INET_ADDRSTRLEN);
+        if (cJSON_AddStringToObject(link, "d_ip", ip_addr_buf) == NULL)
+            goto end;
+        if (cJSON_AddNumberToObject(link, "s2d_len", trans->src2dst_len) == NULL)
+            goto end;
+        if (cJSON_AddNumberToObject(link, "d2s_len", trans->dst2src_len) == NULL)
+            goto end;
+
+        cJSON_AddItemToArray(links, link);
+    }
+
+    pthread_mutex_unlock(link_list_mutex);
+
+    string = cJSON_PrintUnformatted(root);
+
+end:
+    cJSON_Delete(root);
+    return string;  // should be freed in caller.
+}
+
 void merge_link_transfer(struct thread_info *ti, const struct list_head *trans_list)
 {
     struct link_transfer *trans, *trans_tmp, *obj, *obj_tmp;
@@ -431,6 +483,7 @@ void* timing_fn(void *arg)
     struct thread_info *ti;
     struct timeval tv;
     __u32 bytes_in, bytes_out;
+    char *string = NULL;
     int ret;
 
     while (1) {
@@ -457,6 +510,11 @@ void* timing_fn(void *arg)
             ti->trans_count = 0;
             pthread_mutex_unlock(&ti->trans_list_mutex);
             merge_link_transfer(ti, &trans_list);
+            string = parse_link_list_to_json(ti);
+            if (string) {
+                printf("%s\n", string);
+                free(string);
+            }
         }
 
 #if 0
@@ -611,7 +669,7 @@ int main(int argc, char **argv)
                 pcap_breakloop(ti->handle);
         }
     } else
-        printf("No suitable device found.\n");
+        printf("No suitable device found, pcap_lib_version: %s.\n", pcap_lib_version());
 
     list_for_each_entry_safe(ti, ti_tmp, &thread_list, list) {
         ret = pthread_join(ti->th, NULL);
