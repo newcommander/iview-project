@@ -1,5 +1,4 @@
 #define _GNU_SOURCE
-#include <linux/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
@@ -18,76 +17,13 @@
 #include <errno.h>
 #include <pthread.h>
 #include <termios.h>
-#include <pcap/pcap.h>
 #include <cjson/cJSON.h>
-#include "list.h"
+#include "ifmonitor.h"
 
-struct ethernet_frame {
-    __u8 dest_mac[6];
-    __u8 src_mac[6];
-    __u16 type;
-    __u8 data[];
-};
+struct list_head thread_list;
+static pthread_t timing_th, listen_th;;
 
-struct ip_packet {
-    __u8 reserved1[2];
-    __u16 length;
-    __u32 reserved2[2];
-    __u32 src_ip;
-    __u32 dst_ip;
-    __u8 data[];
-};
-
-struct link_transfer {
-    struct list_head list;
-    __u32 src_ip;       // network bytes order
-    __u32 dst_ip;       // network bytes order
-    __u16 src2dst_len;  // host bytes order
-    __u16 dst2src_len;  // host bytes order
-};
-
-#define STATE_BUFFER_LENGTH 10
-struct state_info {
-    int curr_index;
-    __u32 bandwidth_in[STATE_BUFFER_LENGTH];  // in byte
-    __u32 bandwidth_out[STATE_BUFFER_LENGTH];  // in byte
-    struct list_head link_list;
-    pthread_mutex_t link_list_mutex;
-    int link_count;
-};
-
-struct thread_info {
-    struct list_head list;
-    pthread_t th;
-
-#define ETHERNET    0
-#define RAW         1
-    int data_link;
-    int if_is_p2p;
-    char if_name[64];
-    __u32 if_addr;
-    __u32 if_network;
-    __u32 if_netmask;
-    __u32 if_broadaddr;
-    __u32 if_dstaddr;
-    pcap_t *handle;
-
-#define FILTER_EXP_LEN  256
-    char filter_expression[FILTER_EXP_LEN];
-    char errbuf[PCAP_ERRBUF_SIZE];
-    struct bpf_program filter;
-
-    __u32 bytes_in;
-    __u32 bytes_out;
-    struct state_info if_state;
-
-    struct list_head trans_list;
-    pthread_mutex_t trans_list_mutex;
-    __u32 trans_count;
-};
-
-static struct list_head thread_list;
-static pthread_t timing_th;
+#include "listen.c"
 
 static void packet_process(u_char *arg, const struct pcap_pkthdr *header, const u_char *packet)
 {
@@ -512,7 +448,7 @@ void* timing_fn(void *arg)
             merge_link_transfer(ti, &trans_list);
             string = parse_link_list_to_json(ti);
             if (string) {
-                printf("%s\n", string);
+                //printf("%s\n", string);
                 free(string);
             }
         }
@@ -542,10 +478,22 @@ void* timing_fn(void *arg)
     return NULL;
 }
 
-void sigint_handler(int signal, siginfo_t *sg_info, void *unused)
+void cancel_all_threads()
 {
     struct thread_info *ti = NULL;
     int ret;
+
+    if (listen_th != 0) {
+        listen_loop_exit();
+
+        ret = pthread_join(listen_th, NULL);
+        if (ret != 0) {
+            printf("Join listen thread error: %s\n", strerror(ret));
+            // TODO: then what ?
+            return;
+        }
+        listen_th = 0;
+    }
 
     if (timing_th != 0) {
         ret = pthread_cancel(timing_th);
@@ -566,6 +514,11 @@ void sigint_handler(int signal, siginfo_t *sg_info, void *unused)
 
     list_for_each_entry(ti, &thread_list, list)
         pcap_breakloop(ti->handle);
+}
+
+void sigint_handler(int signal, siginfo_t *sg_info, void *unused)
+{
+    cancel_all_threads();
 }
 
 int main(int argc, char **argv)
@@ -598,6 +551,7 @@ int main(int argc, char **argv)
     INIT_LIST_HEAD(&thread_list);
     memset(errbuf, 0, PCAP_ERRBUF_SIZE);
     timing_th = 0;
+    listen_th = 0;
 
     ioctl(STDIN_FILENO, TIOCGWINSZ, &w_size);
     if (w_size.ws_col <= 0)
@@ -665,8 +619,14 @@ int main(int argc, char **argv)
         ret = pthread_create(&timing_th, NULL, timing_fn, print_buf);
         if (ret != 0) {
             printf("Create timing thread failed: %s\n", strerror(ret));
-            list_for_each_entry(ti, &thread_list, list)
-                pcap_breakloop(ti->handle);
+            timing_th = 0;
+            cancel_all_threads();
+        }
+        ret = pthread_create(&listen_th, NULL, listen_fn, NULL);
+        if (ret != 0) {
+            printf("Create listen thread failed: %s\n", strerror(ret));
+            listen_th = 0;
+            cancel_all_threads();
         }
     } else
         printf("No suitable device found, pcap_lib_version: %s.\n", pcap_lib_version());
