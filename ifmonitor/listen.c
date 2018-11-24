@@ -12,7 +12,7 @@
 #include "ifmonitor.h"
 
 #define SERVICE_IP "0.0.0.0"
-#define SERVICE_PORT 554
+#define SERVICE_PORT 9000
 
 #define HTTP_HEADER_BUFFER_LENGTN   1024
 
@@ -34,7 +34,6 @@ static char *error_str_list[] = {
 #define get_error_string(code) \
     (((code) >= sizeof(error_str_list)/sizeof(char*)) ? "Unknow error.": error_str_list[(code)])
 
-static struct event_base *base = NULL;
 static char *static_error_response_string = "{'status':1,'data':'static error response'}";
 
 static void make_html_header(char *buf, int buf_len, int data_len)
@@ -261,7 +260,7 @@ static void write_cb(struct bufferevent *bev, void *user_data)
 static void event_cb(struct bufferevent *bev, short events, void *user_data)
 {
     if (events & BEV_EVENT_EOF) {
-        printf("%s: Connection closed.\n", __func__);
+        //printf("%s: Connection closed.\n", __func__);
     } else if (events & BEV_EVENT_ERROR) {
         printf("%s: Got an error on the connection: %s\n", __func__, strerror(errno));
     } else {
@@ -310,20 +309,31 @@ static void listener_cb(struct evconnlistener *listener, evutil_socket_t fd, str
     bufferevent_enable(bev, EV_READ);
 }
 
-void listen_loop_exit()
+static void signal_cb(evutil_socket_t sig, short events, void *user_data)
 {
-    struct timeval delay = { 0, 500000 }; // 0.5 second
+    struct event_base *base = (struct event_base*)user_data;
 
     if (!base)
         return;
 
-    event_base_loopexit(base, &delay);
+    event_base_loopexit(base, NULL);
 }
 
 void *listen_fn(void *arg)
 {
+    struct event_base *base = NULL;
     struct evconnlistener *listener = NULL;
+    struct event *signal_event = NULL;
     struct sockaddr_in sin;
+    sigset_t sig_set;
+
+    // unblock SIGTEM
+    sigemptyset(&sig_set);
+    sigaddset(&sig_set, SIGTERM);
+    if (pthread_sigmask(SIG_UNBLOCK, &sig_set, NULL)) {
+        printf("[listen] Unblock SIGTERM failed.\n");
+        return NULL;
+    }
 
     base = event_base_new();
     if (!base) {
@@ -343,8 +353,16 @@ void *listen_fn(void *arg)
         goto listener_bind_failed;
     }
 
+    signal_event = evsignal_new(base, SIGTERM, signal_cb, (void *)base);
+    if (!signal_event || event_add(signal_event, NULL) < 0) {
+        fprintf(stderr, "Could not create/add a signal event!\n");
+        goto evsignal_new_failed;
+    }
+
     event_base_dispatch(base);
 
+    event_free(signal_event);
+evsignal_new_failed:
     evconnlistener_free(listener);
 listener_bind_failed:
     event_base_free(base);

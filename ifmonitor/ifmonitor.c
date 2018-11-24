@@ -288,7 +288,7 @@ void* thread_fn(void *arg)
         goto free_code;
     }
 
-    printf("[%s] Start capture... %s\n", ti->if_name, (ti->data_link == ETHERNET) ? "ETHERNET" : "RAW");
+    printf("[%s] Start capture...\n", ti->if_name);
 
     ret = pcap_loop(ti->handle, -1, packet_process, (void*)ti);
     if (ret == -2)
@@ -490,30 +490,32 @@ void cancel_all_threads()
     int ret;
 
     if (listen_th != 0) {
-        listen_loop_exit();
-
-        ret = pthread_join(listen_th, NULL);
-        if (ret != 0) {
-            printf("Join listen thread error: %s\n", strerror(ret));
+        ret = pthread_kill(listen_th, SIGTERM);
+        if (ret == 0) {
+            ret = pthread_join(listen_th, NULL);
+            if (ret != 0) {
+                printf("Join listen thread error: %s\n", strerror(ret));
+                // TODO: then what ?
+            }
+        } else {
+            if (ret == ESRCH)
+                printf("kill listen thread failed, no such thread.\n");
             // TODO: then what ?
-            return;
         }
         listen_th = 0;
     }
 
     if (timing_th != 0) {
         ret = pthread_cancel(timing_th);
-        if (ret != 0) {
+        if (ret == 0) {
+            ret = pthread_join(timing_th, NULL);
+            if (ret != 0) {
+                printf("Join timing thread error: %s\n", strerror(ret));
+                // TODO: then what ?
+            }
+        } else {
             printf("Cancel timing thread error: %s\n", strerror(ret));
             // TODO: then what ?
-            return;
-        }
-
-        ret = pthread_join(timing_th, NULL);
-        if (ret != 0) {
-            printf("Join timing thread error: %s\n", strerror(ret));
-            // TODO: then what ?
-            return;
         }
         timing_th = 0;
     }
@@ -534,25 +536,10 @@ int main(int argc, char **argv)
     struct winsize w_size;
     struct sigaction sa;
     pcap_if_t *if_list = NULL, *p;
+    sigset_t sig_set;
     char errbuf[PCAP_ERRBUF_SIZE];
     char *print_buf = NULL;
     int ret;
-
-    sa.sa_flags = SA_SIGINFO;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_sigaction = sigint_handler;
-
-    ret = sigaction(SIGINT, &sa, NULL);
-    if (ret < 0) {
-        switch (ret) {
-        case EFAULT:
-            printf("sigaction: Invalid action parameter.\n");
-            break;
-        case EINVAL:
-            printf("sigaction: An invalid signal was specified.\n");
-        }
-        return 1;
-    }
 
     INIT_LIST_HEAD(&thread_list);
     memset(errbuf, 0, PCAP_ERRBUF_SIZE);
@@ -592,6 +579,19 @@ int main(int argc, char **argv)
     }
 #endif
 
+    // block signals for all threads
+    sigemptyset(&sig_set);
+    sigaddset(&sig_set, SIGINT);
+    sigaddset(&sig_set, SIGQUIT);
+    sigaddset(&sig_set, SIGTERM);
+    sigaddset(&sig_set, SIGSTOP);
+    ret = pthread_sigmask(SIG_BLOCK, &sig_set, NULL);
+    if (ret != 0) {
+        printf("Set block signal mask failed.\n");
+        ret = 1;
+        goto free;
+    }
+
     p = if_list;
     while (p) {
         if (((p->flags & PCAP_IF_CONNECTION_STATUS) != PCAP_IF_CONNECTION_STATUS_CONNECTED) ||
@@ -628,10 +628,34 @@ int main(int argc, char **argv)
             timing_th = 0;
             cancel_all_threads();
         }
+
         ret = pthread_create(&listen_th, NULL, listen_fn, NULL);
         if (ret != 0) {
             printf("Create listen thread failed: %s\n", strerror(ret));
             listen_th = 0;
+            cancel_all_threads();
+        }
+
+        // unblock SIGINT for main thread
+        sigaddset(&sig_set, SIGINT);
+        if (pthread_sigmask(SIG_UNBLOCK, &sig_set, NULL)) {
+            printf("Unblock SIGINT failed.\n");
+            cancel_all_threads();
+        }
+
+        sa.sa_flags = SA_SIGINFO;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_sigaction = sigint_handler;
+
+        ret = sigaction(SIGINT, &sa, NULL);
+        if (ret < 0) {
+            switch (ret) {
+            case EFAULT:
+                printf("sigaction: Invalid action parameter.\n");
+                break;
+            case EINVAL:
+                printf("sigaction: An invalid signal was specified.\n");
+            }
             cancel_all_threads();
         }
     } else
@@ -654,8 +678,10 @@ int main(int argc, char **argv)
         }
     }
 
+    ret = 0;
+free:
     pcap_freealldevs(if_list);
     free(print_buf);
 
-    return 0;
+    return ret;
 }
