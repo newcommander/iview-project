@@ -2,6 +2,7 @@
 #define IFMONITOR_H
 
 #include <linux/types.h>
+#include <cjson/cJSON.h>
 #include <pcap/pcap.h>
 #include "list.h"
 
@@ -68,5 +69,9 @@ struct thread_info {
     pthread_mutex_t trans_list_mutex;
     __u32 trans_count;
 };
+
+extern struct list_head thread_list;
+
+cJSON* parse_link_list_to_json(struct thread_info *ti);
 
 #endif /* IFMONITOR_H */

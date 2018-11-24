@@ -1,43 +1,158 @@
-#include <stdio.h>
+#include <arpa/inet.h>
+#include <sys/types.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
+#include <stdio.h>
 #include <errno.h>
-#include <arpa/inet.h>
 
-#include <cjson/cJSON.h>
 #include <event2/bufferevent.h>
-#include <event2/bufferevent_struct.h>
-#include <event2/buffer.h>
 #include <event2/listener.h>
+#include <event2/buffer.h>
 
 #include "ifmonitor.h"
 
-static char *service_ip = "0.0.0.0";
-static int service_port = 554;
-static struct event_base *base = NULL;
+#define SERVICE_IP "0.0.0.0"
+#define SERVICE_PORT 554
 
-extern struct list_head thread_list;
+#define HTTP_HEADER_BUFFER_LENGTN   1024
 
-struct error_list {
-    int code;
-    char *string;
-} error_str_list[] = {
-    { 401, "Bad json format of request recived." },
-    { 402, "Request should contain string items 'if_name' and 'item' at least." },
-    { 403, "Cannot find device spcified in 'if_name'." },
-    { 501, "Alloc recive buffer failed." },
-    { 502, "Have no response." }
+enum {
+    r_ping = 0,
+    r_link_list
 };
 
-char* make_error_reply(int code)
-{
-    int i;
+static char *error_str_list[] = {
+    "Alloc recive buffer failed.",
+    "You should specify HTTP POST data.",
+    "Bad json format of request recived.",
+    "Request should contain string items 'if_name' and 'item' at least.",
+    "Cannot find device spcified in 'if_name'.",
+    "Cannot find data spcified in 'item'.",
+    "Make response failed."
+};
 
-    for (i = 0; i < sizeof(error_str_list) / sizeof(struct error_list); i++) {
-        if (error_str_list[i].code == code)
-            return error_str_list[i].string;
+#define get_error_string(code) \
+    (((code) >= sizeof(error_str_list)/sizeof(char*)) ? "Unknow error.": error_str_list[(code)])
+
+static struct event_base *base = NULL;
+static char *static_error_response_string = "{'status':1,'data':'static error response'}";
+
+static void make_html_header(char *buf, int buf_len, int data_len)
+{
+    char *p = buf;
+
+    snprintf(p, 18, "HTTP/1.1 200 OK\r\n");
+    p += strlen(p);
+    snprintf(p, 24, "Server: ifmonitor/1.0\r\n");
+    p += strlen(p);
+    snprintf(p, 21 + 20, "Content-Length: %d\r\n", data_len);
+    p += strlen(p);
+    snprintf(p, 33, "Content-Type: application/json\r\n");
+    p += strlen(p);
+    //snprintf(p, 20, "Connection: close\r\n");
+    //p += strlen(p);
+    snprintf(p, 3, "\r\n");
+}
+
+static char* make_error_response_string(char *error_str)
+{
+    cJSON *root = NULL;
+    char *ret_str = NULL;
+
+    if (!error_str)
+        return static_error_response_string;
+
+    root = cJSON_CreateObject();
+    if (!root)
+        return static_error_response_string;
+
+    if (!cJSON_AddNumberToObject(root, "status", 1)) {
+        cJSON_Delete(root);
+        return static_error_response_string;
     }
+
+    if (!cJSON_AddStringToObject(root, "data", error_str)) {
+        cJSON_Delete(root);
+        return static_error_response_string;
+    }
+
+    ret_str = cJSON_PrintUnformatted(root);
+
+    cJSON_Delete(root);
+
+    if (ret_str)
+        return ret_str;
+    else
+        return static_error_response_string;
+}
+
+static char* make_response_string(cJSON *root)
+{
+    char *ret_str = NULL;
+
+    if (!root)
+        return make_error_response_string(get_error_string(6));
+
+    ret_str = cJSON_PrintUnformatted(root);
+    if (ret_str)
+        return ret_str;
+    else
+        return make_error_response_string(NULL);
+}
+
+static cJSON* make_link_list_obj(struct thread_info *ti)
+{
+    cJSON *obj = NULL;
+
+    if (!ti)
+        return NULL;
+
+    obj = parse_link_list_to_json(ti);
+    if (!obj)
+        goto failed;
+
+    return obj;
+
+failed:
+    if (obj)
+        cJSON_Delete(obj);
+    return NULL;
+}
+
+static cJSON* make_response(struct thread_info *ti, int r_code)
+{
+    cJSON *root = NULL, *data_obj = NULL;
+
+    if (!ti)
+        return NULL;
+
+    root = cJSON_CreateObject();
+    if (!root)
+        goto failed;
+
+    if (!cJSON_AddNumberToObject(root, "status", 0))
+        goto failed;
+
+    switch (r_code) {
+    case r_ping:
+        if (!cJSON_AddStringToObject(root, "data", "pong"))
+            goto failed;
+        break;
+    case r_link_list:
+        data_obj = make_link_list_obj(ti);
+        if (!data_obj)
+            goto failed;
+        cJSON_AddItemToObject(root, "data", data_obj);
+        break;
+    default:
+        goto failed;
+    }
+
+    return root;
+
+failed:
+    if (root)
+        cJSON_Delete(root);
     return NULL;
 }
 
@@ -46,46 +161,47 @@ static void read_cb(struct bufferevent *bev, void *user_data)
     struct evbuffer *input = bufferevent_get_input(bev);
     struct thread_info *ti = NULL, *ti_tmp;
     cJSON *req = NULL, *if_name, *item;
-    char *response_str = NULL, *request_str = NULL, *p;
-    char *result_str = NULL, *error_str = NULL;
-    int offset = 0;
+    cJSON *result_data = NULL;
+    char *recv_buf = NULL;
+    size_t recv_len = 0, offset = 0;
+    char *request_str = NULL, *response_str = NULL, *error_str = NULL, *p;
+    char http_header[HTTP_HEADER_BUFFER_LENGTN];
+    int r_code;
 
-    size_t len = evbuffer_get_length(input);
-    char *buf = (char*)calloc(len + 1, 1);
-    if (!buf) {
-        printf("%s: alloc recive buffer failed\n", __func__);
-        error_str = make_error_reply(501);
+    recv_len = evbuffer_get_length(input);
+    recv_buf = (char*)calloc(recv_len + 1, 1);
+    if (!recv_buf) {
+        printf("%s: Alloc recive buffer failed.\n", __func__);
+        error_str = get_error_string(0);
         goto reply;
     }
 
-    p = buf;
+    p = recv_buf;
     offset = 0;
-    while ((offset = bufferevent_read(bev, p, buf + len - p)) > 0)
+    while ((offset = bufferevent_read(bev, p, recv_buf + recv_len - p)) > 0)
         p += offset;
 
-    request_str = strstr(buf, "\r\n\r\n");
+    request_str = strstr(recv_buf, "\r\n\r\n");
     if (!request_str || strlen(&request_str[4]) == 0) {
-        error_str = make_error_reply(402);
+        error_str = get_error_string(1);
         goto reply;
     }
     request_str = &request_str[4];
 
     req = cJSON_Parse(request_str);
     if (!req) {
-        error_str = make_error_reply(401);
+        error_str = get_error_string(2);
         goto reply;
     }
 
     if (!(cJSON_HasObjectItem(req, "if_name") && cJSON_HasObjectItem(req, "item")) ||
         !(cJSON_IsString(cJSON_GetObjectItem(req, "if_name")) && cJSON_IsString(cJSON_GetObjectItem(req, "item")))) {
-        error_str = make_error_reply(402);
+        error_str = get_error_string(3);
         goto reply;
     }
 
     if_name = cJSON_GetObjectItem(req, "if_name");
     item = cJSON_GetObjectItem(req, "item");
-
-    printf("if_name: %s, item: %s\n", if_name->valuestring, item->valuestring);
 
     list_for_each_entry(ti_tmp, &thread_list, list) {
         if (!strcmp(ti_tmp->if_name, if_name->valuestring)) {
@@ -95,29 +211,43 @@ static void read_cb(struct bufferevent *bev, void *user_data)
     }
 
     if (!ti) {
-        error_str = make_error_reply(403);
+        error_str = get_error_string(4);
         goto reply;
     }
 
-reply:
-    if (result_str)
-        response_str = result_str;
-    else if (error_str)
-        response_str = error_str;
-    else
-        response_str = make_error_reply(502);
+    if (!strncmp(item->valuestring, "ping", 4)) {
+        r_code = r_ping;
+    } else if (!strncmp(item->valuestring, "link_list", 9)) {
+        r_code = r_link_list;
+    } else {
+        error_str = get_error_string(5);
+        goto reply;
+    }
 
+    result_data = make_response(ti, r_code);
+
+reply:
+    if (result_data)
+        response_str = make_response_string(result_data);
+    else
+        response_str = make_error_response_string(error_str);
+
+    make_html_header(http_header, HTTP_HEADER_BUFFER_LENGTN, strlen(response_str));
+
+    bufferevent_write(bev, http_header, strlen(http_header));
     bufferevent_write(bev, response_str, strlen(response_str));
     bufferevent_flush(bev, EV_WRITE, BEV_FLUSH);
 
-    if (result_str)
-        free(result_str);
-
     //bufferevent_free(bev);
 
-    cJSON_Delete(req);
-    if (buf)
-        free(buf);
+    if (result_data)
+        cJSON_Delete(result_data);
+    if (req)
+        cJSON_Delete(req);
+    if (response_str != static_error_response_string)
+        free(response_str);
+    if (recv_buf)
+        free(recv_buf);
 }
 
 static void write_cb(struct bufferevent *bev, void *user_data)
@@ -203,8 +333,8 @@ void *listen_fn(void *arg)
 
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
-    sin.sin_addr.s_addr = inet_addr(service_ip);
-    sin.sin_port = htons(service_port);
+    sin.sin_addr.s_addr = inet_addr(SERVICE_IP);
+    sin.sin_port = htons(SERVICE_PORT);
 
     listener = evconnlistener_new_bind(base, listener_cb, (void *)base,
             LEV_OPT_REUSEABLE|LEV_OPT_CLOSE_ON_FREE, -1, (struct sockaddr*)&sin, sizeof(sin));

@@ -1,29 +1,30 @@
 #define _GNU_SOURCE
+
 #include <sys/socket.h>
-#include <sys/ioctl.h>
-#include <net/if.h>
 #include <netinet/in.h>
-#include <arpa/inet.h>
 #include <sys/select.h>
-#include <sys/time.h>
+#include <sys/ioctl.h>
+#include <arpa/inet.h>
 #include <sys/types.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <errno.h>
-#include <string.h>
-#include <signal.h>
-#include <errno.h>
+#include <sys/time.h>
 #include <pthread.h>
 #include <termios.h>
-#include <cjson/cJSON.h>
+#include <net/if.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include <signal.h>
+#include <stdio.h>
+#include <errno.h>
+#include <errno.h>
+
 #include "ifmonitor.h"
+
+#include "listen.c"
 
 struct list_head thread_list;
 static pthread_t timing_th, listen_th;;
-
-#include "listen.c"
 
 static void packet_process(u_char *arg, const struct pcap_pkthdr *header, const u_char *packet)
 {
@@ -325,13 +326,13 @@ void sort_list_by_src2dst_len(struct list_head *link_list)
     move_list(link_list, &order_list);
 }
 
-char* parse_link_list_to_json(struct thread_info *ti)
+cJSON* parse_link_list_to_json(struct thread_info *ti)
 {
     struct list_head *link_list = &ti->if_state.link_list;
     struct link_transfer *trans;
     pthread_mutex_t *link_list_mutex = &ti->if_state.link_list_mutex;
     cJSON *root = NULL, *links = NULL, *link = NULL;
-    char *string = NULL, ip_addr_buf[INET_ADDRSTRLEN];
+    char ip_addr_buf[INET_ADDRSTRLEN];
 
     memset(ip_addr_buf, 0, INET_ADDRSTRLEN);
 
@@ -339,41 +340,52 @@ char* parse_link_list_to_json(struct thread_info *ti)
     if (!root)
         return NULL;
 
-    if (cJSON_AddStringToObject(root, "if_name", ti->if_name) == NULL)
-        goto end;
+    if (!cJSON_AddStringToObject(root, "if_name", ti->if_name))
+        goto failed;
 
     links = cJSON_AddArrayToObject(root, "links");
     if (!links)
-        goto end;
+        goto failed;
 
     pthread_mutex_lock(link_list_mutex);
 
     list_for_each_entry(trans, link_list, list) {
         link = cJSON_CreateObject();
-        if (!link)
-            goto end;
+        if (!link) {
+            pthread_mutex_unlock(link_list_mutex);
+            goto failed;
+        }
 
         inet_ntop(AF_INET, &trans->src_ip, ip_addr_buf, INET_ADDRSTRLEN);
-        if (cJSON_AddStringToObject(link, "s_ip", ip_addr_buf) == NULL)
-            goto end;
+        if (!cJSON_AddStringToObject(link, "s_ip", ip_addr_buf)) {
+            pthread_mutex_unlock(link_list_mutex);
+            goto failed;
+        }
         inet_ntop(AF_INET, &trans->dst_ip, ip_addr_buf, INET_ADDRSTRLEN);
-        if (cJSON_AddStringToObject(link, "d_ip", ip_addr_buf) == NULL)
-            goto end;
-        if (cJSON_AddNumberToObject(link, "s2d_len", trans->src2dst_len) == NULL)
-            goto end;
-        if (cJSON_AddNumberToObject(link, "d2s_len", trans->dst2src_len) == NULL)
-            goto end;
+        if (!cJSON_AddStringToObject(link, "d_ip", ip_addr_buf)) {
+            pthread_mutex_unlock(link_list_mutex);
+            goto failed;
+        }
+        if (!cJSON_AddNumberToObject(link, "s2d_len", trans->src2dst_len)) {
+            pthread_mutex_unlock(link_list_mutex);
+            goto failed;
+        }
+        if (!cJSON_AddNumberToObject(link, "d2s_len", trans->dst2src_len)) {
+            pthread_mutex_unlock(link_list_mutex);
+            goto failed;
+        }
 
         cJSON_AddItemToArray(links, link);
     }
 
     pthread_mutex_unlock(link_list_mutex);
 
-    string = cJSON_PrintUnformatted(root);
+    return root;
 
-end:
-    cJSON_Delete(root);
-    return string;  // should be freed in caller.
+failed:
+    if (root)
+        cJSON_Delete(root);
+    return NULL;
 }
 
 void merge_link_transfer(struct thread_info *ti, const struct list_head *trans_list)
@@ -419,7 +431,6 @@ void* timing_fn(void *arg)
     struct thread_info *ti;
     struct timeval tv;
     __u32 bytes_in, bytes_out;
-    char *string = NULL;
     int ret;
 
     while (1) {
@@ -446,11 +457,6 @@ void* timing_fn(void *arg)
             ti->trans_count = 0;
             pthread_mutex_unlock(&ti->trans_list_mutex);
             merge_link_transfer(ti, &trans_list);
-            string = parse_link_list_to_json(ti);
-            if (string) {
-                //printf("%s\n", string);
-                free(string);
-            }
         }
 
 #if 0
