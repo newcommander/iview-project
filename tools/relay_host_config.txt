@@ -1,0 +1,7 @@
+ccw:
+    1. openvpn /opt/openvpn/cc2/client.conf
+    2. openvpn-rawbit /opt/openvpn/server.conf
+    3. echo 1 > /proc/sys/net/ipv4/ip_forward
+    4. iptables -t nat -A POSTROUTING -s 10.6.0.0/24 -j SNAT --to-source 10.7.0.6 --random
+    5. ip route add default via 10.7.0.6 table 100
+    6. ip rule add from 10.6.0.0/24 table 100
